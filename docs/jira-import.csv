@@ -1,0 +1,493 @@
+Summary,Issue Type,Description,Story Points,Priority,Labels,Labels,Labels,Labels
+"Planning docs: PRD, CLAUDE.md, Jira import",Story,"Planned ID: DS-1
+Owner: Dev A
+Day: 0
+Epic: E1 Foundation
+
+Spec: docs/PRD.md section 12 (row DS-1) and the FRs listed. 
+
+Acceptance criteria:
+PRD merged; CLAUDE.md present; this CSV imports cleanly.
+
+Requirements: -",1,High,epic-foundation,dev-a,day-0,
+"Repo scaffold (uv, src layout, ruff, pytest, pre-commit, LICENSE)",Task,"Planned ID: DS-2
+Owner: Dev A
+Day: 1
+Epic: E1 Foundation
+
+Spec: docs/PRD.md section 12 (row DS-2) and the FRs listed. 
+
+Acceptance criteria:
+uv project with src layout; `uv run dragshift --help` works; ruff+pytest+pre-commit configured; AGPL-3.0 LICENSE.
+
+Requirements: FR-6.1",2,High,epic-foundation,dev-a,day-1,
+"CI workflow, PR template, CODEOWNERS",Task,"Planned ID: DS-3
+Owner: Dev A
+Day: 1
+Epic: E1 Foundation
+
+Spec: docs/PRD.md section 12 (row DS-3) and the FRs listed. 
+
+Acceptance criteria:
+GitHub Actions windows-latest runs ruff+pytest; PR template with checklist; CODEOWNERS requests the other dev.
+
+Requirements: NFR-10",2,High,epic-foundation,dev-a,day-1,
+SPIKE: global hooks + drag detection + COPY-only drop window,Task,"Planned ID: DS-4
+Owner: Dev A
+Day: 1
+Epic: E2 Gesture core
+
+Spec: docs/PRD.md section 12 (row DS-4) and the FRs listed. 
+
+Acceptance criteria:
+Throwaway script logs drag candidate + modifier; test drop window; Shift-drop leaves the SOURCE IN PLACE; notes on SysDragImage reliability and DragEnter timing in PR.
+
+Requirements: FR-1.1, FR-1.2, FR-1.8",5,High,epic-gesture-core,dev-a,day-1,spike
+SPIKE: glass wheel prototype + RAM baseline,Task,"Planned ID: DS-5
+Owner: Dev B
+Day: 1
+Epic: E2 Gesture core
+
+Spec: docs/PRD.md section 12 (row DS-5) and the FRs listed. 
+
+Acceptance criteria:
+Static wheel rendered with the PRD 8.4 recipe over a snapshot; screenshot in PR; idle RAM of bare PySide6 app recorded.
+
+Requirements: PRD 8.4, NFR-1",3,High,epic-gesture-core,dev-b,day-1,spike
+"Engine contract: kinds, registry, JobManager skeleton",Story,"Planned ID: DS-6
+Owner: Dev B
+Day: 1
+Epic: E3 Conversions
+
+Spec: docs/PRD.md section 12 (row DS-6) and the FRs listed. 
+
+Acceptance criteria:
+PRD 9.4 interfaces implemented; sample PNG->JPG op runs end-to-end via worker pool; pool shuts down after 60 s idle; tests.
+
+Requirements: FR-4.1, FR-4.2",3,High,epic-conversions,dev-b,day-1,
+HookThread -> Qt signal bridge,Story,"Planned ID: DS-7
+Owner: Dev A
+Day: 2
+Epic: E2 Gesture core
+
+Spec: docs/PRD.md section 12 (row DS-7) and the FRs listed. 
+
+Acceptance criteria:
+LL mouse+keyboard hooks on own thread; queued signals; injected events ignored; watchdog re-install; callbacks < 1 ms.
+
+Requirements: FR-1.1, NFR-3",3,High,epic-gesture-core,dev-a,day-2,
+Config module (config.json schema v1),Story,"Planned ID: DS-8
+Owner: Dev A
+Day: 2
+Epic: E7 App shell
+
+Spec: docs/PRD.md section 12 (row DS-8) and the FRs listed. 
+
+Acceptance criteria:
+PRD 10.1 schema, load/save/migrate, bad-file backup, live-reload signal; tests.
+
+Requirements: FR-8.2",2,High,epic-app-shell,dev-a,day-2,
+"Wheel widget (petals, hit-test, hub, More ring, drop)",Story,"Planned ID: DS-9
+Owner: Dev B
+Day: 2
+Epic: E2 Gesture core
+
+Spec: docs/PRD.md section 12 (row DS-9) and the FRs listed. 
+
+Acceptance criteria:
+2-8 petals, geometry + hit-test, hover, hub label + thumbnail, More ring, disabled state, drop per FR-1.8, dropped signal; pytest-qt tests.
+
+Requirements: FR-1.7..1.10, FR-2.1..2.3",5,High,epic-gesture-core,dev-b,day-2,
+Gesture state machine (drag branch),Story,"Planned ID: DS-10
+Owner: Dev A
+Day: 3
+Epic: E2 Gesture core
+
+Spec: docs/PRD.md section 12 (row DS-10) and the FRs listed. 
+
+Acceptance criteria:
+PRD 9.5 drag branch; is_file_drag; open/swap/close wheel; Explorer selection prefill; pause; unit tests with synthetic events.
+
+Requirements: FR-1.2..1.6, FR-1.9, FR-1.12",5,High,epic-gesture-core,dev-a,day-3,
+"Drop safety, Esc, LMB-up, timeout",Story,"Planned ID: DS-11
+Owner: Dev A
+Day: 3
+Epic: E2 Gesture core
+
+Spec: docs/PRD.md section 12 (row DS-11) and the FRs listed. 
+
+Acceptance criteria:
+Manual checklist items 1, 5, 6 pass; never MoveAction.
+
+Requirements: FR-1.8, FR-1.9",2,High,epic-gesture-core,dev-a,day-3,
+"Glass renderer + theme (light/dark, accent, motion)",Story,"Planned ID: DS-12
+Owner: Dev B
+Day: 3
+Epic: E2 Gesture core
+
+Spec: docs/PRD.md section 12 (row DS-12) and the FRs listed. 
+
+Acceptance criteria:
+PRD 8.2 tokens, 8.4 recipe, light/dark, Windows accent, open/close/swap motion, reduced motion.
+
+Requirements: PRD 8, NFR-8",5,High,epic-gesture-core,dev-b,day-3,
+Image converters,Story,"Planned ID: DS-13
+Owner: Dev B
+Day: 3
+Epic: E3 Conversions
+
+Spec: docs/PRD.md section 12 (row DS-13) and the FRs listed. 
+
+Acceptance criteria:
+PRD 6.1 image row incl. HEIC, AVIF, SVG input, ICO, Merge to PDF; round-trip tests.
+
+Requirements: PRD 6.1",3,High,epic-conversions,dev-b,day-3,
+Media converters (ffmpeg) with progress + cancel,Story,"Planned ID: DS-14
+Owner: Dev A
+Day: 4
+Epic: E3 Conversions
+
+Spec: docs/PRD.md section 12 (row DS-14) and the FRs listed. 
+
+Acceptance criteria:
+PRD 6.1 audio + video rows; progress from -progress pipe:1; cancel kills process.
+
+Requirements: PRD 6.1, FR-4.5",3,High,epic-conversions,dev-a,day-4,
+Tap detection + Quick Launch context gates,Story,"Planned ID: DS-15
+Owner: Dev A
+Day: 4
+Epic: E6 Quick Launch
+
+Spec: docs/PRD.md section 12 (row DS-15) and the FRs listed. 
+
+Acceptance criteria:
+Tap + double-tap; gates G-a..G-f; manual checklist item 8 passes.
+
+Requirements: FR-3.1, FR-3.2",5,High,epic-quick-launch,dev-a,day-4,
+PDF converters,Story,"Planned ID: DS-16
+Owner: Dev B
+Day: 4
+Epic: E3 Conversions
+
+Spec: docs/PRD.md section 12 (row DS-16) and the FRs listed. 
+
+Acceptance criteria:
+DOCX, PNG/JPG @ config DPI into pages folder, TXT, MD, PPTX.
+
+Requirements: PRD 6.1",3,High,epic-conversions,dev-b,day-4,
+Document converters (pandoc),Story,"Planned ID: DS-17
+Owner: Dev B
+Day: 4
+Epic: E3 Conversions
+
+Spec: docs/PRD.md section 12 (row DS-17) and the FRs listed. 
+
+Acceptance criteria:
+PRD 6.1 document row (except PDF).
+
+Requirements: PRD 6.1",2,High,epic-conversions,dev-b,day-4,
+"Output naming, toasts, undo, history, usage counts",Story,"Planned ID: DS-18
+Owner: Dev B
+Day: 4
+Epic: E3 Conversions
+
+Spec: docs/PRD.md section 12 (row DS-18) and the FRs listed. 
+
+Acceptance criteria:
+FR-5.1..5.7; .part + atomic rename; history.json; usage counts feed smart ordering.
+
+Requirements: FR-5, FR-2.2",3,High,epic-conversions,dev-b,day-4,
+Quick Launch: Apps + Sites wheels,Story,"Planned ID: DS-19
+Owner: Dev A
+Day: 5
+Epic: E6 Quick Launch
+
+Spec: docs/PRD.md section 12 (row DS-19) and the FRs listed. 
+
+Acceptance criteria:
+Launcher wheel reusing Wheel widget; launch exe/lnk/folder/AUMID/URL; favicon cache; 1-8 keys.
+
+Requirements: FR-3.3..3.6",3,High,epic-quick-launch,dev-a,day-5,
+"Sheets, subtitles, archives converters",Story,"Planned ID: DS-20
+Owner: Dev A
+Day: 5
+Epic: E3 Conversions
+
+Spec: docs/PRD.md section 12 (row DS-20) and the FRs listed. 
+
+Acceptance criteria:
+PRD 6.1 rows; RAR/7z via tar.exe; folder -> ZIP.
+
+Requirements: PRD 6.1",3,High,epic-conversions,dev-a,day-5,
+Actions wheel (Alt),Story,"Planned ID: DS-21
+Owner: Dev A
+Day: 5
+Epic: E5 File actions
+
+Spec: docs/PRD.md section 12 (row DS-21) and the FRs listed. 
+
+Acceptance criteria:
+PRD 6.3 actions incl. pinned folders; undo for Move/Copy-to.
+
+Requirements: PRD 6.3, FR-5.6",3,High,epic-file-actions,dev-a,day-5,
+Compress + size presets (image/PDF/video/audio),Story,"Planned ID: DS-22
+Owner: Dev B
+Day: 5
+Epic: E4 Tools wheel
+
+Spec: docs/PRD.md section 12 (row DS-22) and the FRs listed. 
+
+Acceptance criteria:
+Email 25 MB / WhatsApp 16 MB / Discord 10 MB / Small / Custom for every compress tool; preset outer ring; best-effort message.
+
+Requirements: FR-4.3, FR-4.4",3,High,epic-tools-wheel,dev-b,day-5,
+"Other tools (resize, rotate, metadata, PDF merge/split/extract, video/audio tools)",Story,"Planned ID: DS-23
+Owner: Dev B
+Day: 5
+Epic: E4 Tools wheel
+
+Spec: docs/PRD.md section 12 (row DS-23) and the FRs listed. 
+
+Acceptance criteria:
+All non-dialog tools in PRD 6.2.
+
+Requirements: PRD 6.2",3,High,epic-tools-wheel,dev-b,day-5,
+Acrylic glass dialog base,Story,"Planned ID: DS-24
+Owner: Dev B
+Day: 5
+Epic: E4 Tools wheel
+
+Spec: docs/PRD.md section 12 (row DS-24) and the FRs listed. 
+
+Acceptance criteria:
+PRD 8.6 base: DWM Acrylic, dark mode, rounded corners, Win10 fallback, styled controls.
+
+Requirements: PRD 8.6",2,High,epic-tools-wheel,dev-b,day-5,
+"Tray menu + Settings window (all tabs, launcher editor)",Story,"Planned ID: DS-25
+Owner: Dev A
+Day: 6
+Epic: E7 App shell
+
+Spec: docs/PRD.md section 12 (row DS-25) and the FRs listed. 
+
+Acceptance criteria:
+FR-7.1 tray; FR-8.1 all tabs; live apply.
+
+Requirements: FR-7.1, FR-8.1",5,High,epic-app-shell,dev-a,day-6,
+"Autostart, single instance, CLI subcommands, --background",Story,"Planned ID: DS-26
+Owner: Dev A
+Day: 6
+Epic: E7 App shell
+
+Spec: docs/PRD.md section 12 (row DS-26) and the FRs listed. 
+
+Acceptance criteria:
+FR-6.2..6.5 and FR-7.2.
+
+Requirements: FR-6, FR-7.2",2,High,epic-app-shell,dev-a,day-6,
+Crop dialog,Story,"Planned ID: DS-27
+Owner: Dev B
+Day: 6
+Epic: E4 Tools wheel
+
+Spec: docs/PRD.md section 12 (row DS-27) and the FRs listed. 
+
+Acceptance criteria:
+PRD 8.6 Crop spec (ratios, handles, W/H, Reset/Apply).
+
+Requirements: PRD 8.6",3,High,epic-tools-wheel,dev-b,day-6,
+Add BG dialog,Story,"Planned ID: DS-28
+Owner: Dev B
+Day: 6
+Epic: E4 Tools wheel
+
+Spec: docs/PRD.md section 12 (row DS-28) and the FRs listed. 
+
+Acceptance criteria:
+PRD 8.6 Add BG spec; Qt preview, Pillow final render in worker.
+
+Requirements: PRD 8.6",5,High,epic-tools-wheel,dev-b,day-6,
+Idle-RAM pass,Story,"Planned ID: DS-29
+Owner: Dev B
+Day: 6
+Epic: E7 App shell
+
+Spec: docs/PRD.md section 12 (row DS-29) and the FRs listed. 
+
+Acceptance criteria:
+test_ui_imports passes; working-set trim option; numbers recorded; idle <= 60 MB.
+
+Requirements: NFR-1",2,High,epic-app-shell,dev-b,day-6,
+"README, architecture doc, demo GIFs",Task,"Planned ID: DS-30
+Owner: Dev Both
+Day: 7
+Epic: E8 Release
+
+Spec: docs/PRD.md section 12 (row DS-30) and the FRs listed. 
+
+Acceptance criteria:
+README with install/run/usage GIFs; docs/architecture.md; manual checklist current.
+
+Requirements: -",2,High,epic-release,dev-both,day-7,
+Bug bash (full manual checklist on both machines),Task,"Planned ID: DS-31
+Owner: Dev Both
+Day: 7
+Epic: E8 Release
+
+Spec: docs/PRD.md section 12 (row DS-31) and the FRs listed. 
+
+Acceptance criteria:
+PRD 11.2 checklist on both machines; bugs filed and fixed or deferred.
+
+Requirements: M5",3,High,epic-release,dev-both,day-7,
+Release v0.1.0 + sprint review/retro,Task,"Planned ID: DS-32
+Owner: Dev A
+Day: 7
+Epic: E8 Release
+
+Spec: docs/PRD.md section 12 (row DS-32) and the FRs listed. 
+
+Acceptance criteria:
+Tag v0.1.0, GitHub release notes, review + retro notes in Jira.
+
+Requirements: -",1,High,epic-release,dev-a,day-7,
+STRETCH: Office/LibreOffice -> PDF (+ slides -> PNG/JPG),Story,"Planned ID: DS-33
+Owner: Dev B
+Day: stretch
+Epic: E3 Conversions
+
+Spec: docs/PRD.md section 12 (row DS-33) and the FRs listed. 
+
+Acceptance criteria:
+PRD 12.2.
+
+Requirements: PRD 6.1",3,Medium,epic-conversions,dev-b,stretch,
+STRETCH: Keyboard hotkey opens wheel for Explorer selection,Story,"Planned ID: DS-34
+Owner: Dev A
+Day: stretch
+Epic: E2 Gesture core
+
+Spec: docs/PRD.md section 12 (row DS-34) and the FRs listed. 
+
+Acceptance criteria:
+PRD 12.2.
+
+Requirements: -",3,Medium,epic-gesture-core,dev-a,stretch,
+STRETCH: Float shelf action,Story,"Planned ID: DS-35
+Owner: Dev A
+Day: stretch
+Epic: E5 File actions
+
+Spec: docs/PRD.md section 12 (row DS-35) and the FRs listed. 
+
+Acceptance criteria:
+PRD 6.3 / 12.2.
+
+Requirements: -",3,Medium,epic-file-actions,dev-a,stretch,
+STRETCH: Redact (PDF + image),Story,"Planned ID: DS-36
+Owner: Dev B
+Day: stretch
+Epic: E4 Tools wheel
+
+Spec: docs/PRD.md section 12 (row DS-36) and the FRs listed. 
+
+Acceptance criteria:
+PRD 12.2.
+
+Requirements: -",5,Medium,epic-tools-wheel,dev-b,stretch,
+STRETCH: Annotate images,Story,"Planned ID: DS-37
+Owner: Dev B
+Day: stretch
+Epic: E4 Tools wheel
+
+Spec: docs/PRD.md section 12 (row DS-37) and the FRs listed. 
+
+Acceptance criteria:
+PRD 12.2.
+
+Requirements: -",5,Medium,epic-tools-wheel,dev-b,stretch,
+STRETCH: Trim dialog for audio/video,Story,"Planned ID: DS-38
+Owner: Dev A
+Day: stretch
+Epic: E4 Tools wheel
+
+Spec: docs/PRD.md section 12 (row DS-38) and the FRs listed. 
+
+Acceptance criteria:
+PRD 12.2.
+
+Requirements: -",3,Medium,epic-tools-wheel,dev-a,stretch,
+STRETCH: Edit adjustments (brightness/contrast/saturation),Story,"Planned ID: DS-39
+Owner: Dev B
+Day: stretch
+Epic: E4 Tools wheel
+
+Spec: docs/PRD.md section 12 (row DS-39) and the FRs listed. 
+
+Acceptance criteria:
+PRD 12.2.
+
+Requirements: -",3,Medium,epic-tools-wheel,dev-b,stretch,
+BACKLOG: OCR image/PDF -> TXT via Windows OCR,Story,"Planned ID: DS-40
+Owner: Dev -
+Day: backlog
+Epic: Backlog
+
+Acceptance criteria:
+Idea only; not in PRD.
+
+Requirements: -",,Low,epic-backlog,unassigned,backlog,
+BACKLOG: Clipboard wheel (save clipboard image/text as file),Story,"Planned ID: DS-41
+Owner: Dev -
+Day: backlog
+Epic: Backlog
+
+Acceptance criteria:
+Idea only; not in PRD.
+
+Requirements: -",,Low,epic-backlog,unassigned,backlog,
+BACKLOG: AI background removal (rembg),Story,"Planned ID: DS-42
+Owner: Dev -
+Day: backlog
+Epic: Backlog
+
+Acceptance criteria:
+Idea only; not in PRD.
+
+Requirements: -",,Low,epic-backlog,unassigned,backlog,
+BACKLOG: Explorer right-click DragShift menu,Story,"Planned ID: DS-43
+Owner: Dev -
+Day: backlog
+Epic: Backlog
+
+Acceptance criteria:
+Idea only; not in PRD.
+
+Requirements: -",,Low,epic-backlog,unassigned,backlog,
+BACKLOG: Batch rename with pattern,Story,"Planned ID: DS-44
+Owner: Dev -
+Day: backlog
+Epic: Backlog
+
+Acceptance criteria:
+Idea only; not in PRD.
+
+Requirements: -",,Low,epic-backlog,unassigned,backlog,
+BACKLOG: PDF password protect/unlock,Story,"Planned ID: DS-45
+Owner: Dev -
+Day: backlog
+Epic: Backlog
+
+Acceptance criteria:
+Idea only; not in PRD.
+
+Requirements: -",,Low,epic-backlog,unassigned,backlog,
+BACKLOG: Windows Share sheet / Nearby Share action,Story,"Planned ID: DS-46
+Owner: Dev -
+Day: backlog
+Epic: Backlog
+
+Acceptance criteria:
+Idea only; not in PRD.
+
+Requirements: -",,Low,epic-backlog,unassigned,backlog,
