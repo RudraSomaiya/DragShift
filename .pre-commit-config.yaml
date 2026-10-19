@@ -1,0 +1,20 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.1
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      # docs/ keeps its exact bytes (Markdown hard breaks, CSV import); LICENSE is verbatim.
+      - id: trailing-whitespace
+        exclude: ^(docs/|LICENSE$)
+      - id: end-of-file-fixer
+        exclude: ^(docs/|LICENSE$)
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=500]
