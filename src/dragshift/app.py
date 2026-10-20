@@ -56,7 +56,9 @@ class App(QObject):
         if registry.get(op_id).dialog:
             log.warning("%s needs a dialog, which is not built yet; nothing was run", op_id)
             return
-        self.jobs.submit(op_id, list(paths))
+        # Settings > Output > JPEG/WebP quality (FR-8.1), read at drop time so it applies live.
+        quality = self.store.config.output.jpeg_quality
+        self.jobs.submit(op_id, list(paths), {"quality": quality})
 
     @Slot(str, object)
     def on_finished(self, _job_id: str, result: JobResult) -> None:
