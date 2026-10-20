@@ -313,7 +313,8 @@ def test_live_hooks_see_injected_input_and_drop_it(live: HookThread, qtbot: QtBo
     tap_f24()
     assert wait_for(lambda: live.injected_ignored >= 2), "hooks never saw the injected key"
     qtbot.wait(100)  # let any (wrongly) emitted signal be delivered
-    assert out == []
+    # Real input from whoever is using the machine is forwarded, so only F24 must be absent.
+    assert [e for e in out if e.vk == VK_F24] == []
     assert live.errors == 0
 
 
