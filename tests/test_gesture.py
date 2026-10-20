@@ -287,12 +287,41 @@ def test_lmb_up_without_a_wheel_goes_idle(rig: Rig) -> None:
     assert rig.opens() == []
 
 
-def test_esc_closes_the_wheel(rig: Rig) -> None:
+def test_esc_closes_the_wheel_only_after_the_cancel_has_reached_it(
+    rig: Rig, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Hiding the wheel at once on Esc orphans the shell's drag image (a ghost icon on screen)."""
+    monkeypatch.setattr(gesture, "ESC_CLOSE_DELAY_MS", 80)
     rig.start_drag()
     rig.key(LSHIFT)
     rig.key(ESC)
-    assert rig.wheel.calls[-1] == ("close",)
-    assert rig.gc.state is State.IDLE
+    assert rig.gc.state is State.IDLE  # the gesture is over straight away...
+    assert ("close",) not in rig.wheel.calls  # ...but the wheel is still there
+    assert rig.wheel.visible
+    qtbot.waitUntil(lambda: ("close",) in rig.wheel.calls, timeout=2000)
+    assert not rig.wheel.visible
+
+
+def test_the_default_esc_delay_is_long_enough_to_matter() -> None:
+    """Measured with a real Explorer drag: closing 100 ms after Esc never left a ghost."""
+    assert gesture.ESC_CLOSE_DELAY_MS >= 100
+
+
+def test_a_pending_esc_close_does_not_hit_a_wheel_opened_meanwhile(
+    rig: Rig, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(gesture, "ESC_CLOSE_DELAY_MS", 80)
+    rig.start_drag()
+    rig.key(LSHIFT)
+    rig.key(ESC)
+    rig.release_key(LSHIFT)
+    rig.release()
+    rig.start_drag()  # a new drag within the delay
+    rig.key(LSHIFT)
+    assert len(rig.opens()) == 2
+    qtbot.wait(200)
+    assert ("close",) not in rig.wheel.calls  # the leftover close was cancelled
+    assert rig.gc.state is State.WHEEL_OPEN
 
 
 def test_esc_with_no_wheel_does_nothing(rig: Rig) -> None:
@@ -389,7 +418,7 @@ def test_other_mouse_events_are_ignored_in_the_drag_branch(rig: Rig) -> None:
 
 
 # --- with the real WheelWindow ----------------------------------------------------------------------
-def test_drives_the_real_wheel_window(qapp: object) -> None:
+def test_drives_the_real_wheel_window(qapp: object, qtbot: QtBot) -> None:
     from dragshift.ui.wheel import WheelWindow
 
     wheel = WheelWindow()
@@ -407,8 +436,8 @@ def test_drives_the_real_wheel_window(qapp: object) -> None:
     gc.on_input(RawInput(InputKind.KEY_DOWN, 0, 0, LCTRL, 0))
     assert wheel.isVisible()
     gc.on_input(RawInput(InputKind.KEY_DOWN, 0, 0, ESC, 0))
-    assert not wheel.isVisible()
     assert gc.state is State.IDLE
+    qtbot.waitUntil(lambda: not wheel.isVisible(), timeout=2000)  # closes after ESC_CLOSE_DELAY_MS
 
 
 # --- the real probes and Explorer COM, smoke-tested on this desktop ----------------------------------

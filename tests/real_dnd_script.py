@@ -14,11 +14,12 @@ import sys
 import tempfile
 import threading
 import time
+from collections.abc import Callable
 from ctypes import wintypes
 from pathlib import Path
 
 from PySide6.QtCore import QEventLoop, QMimeData, QPoint, QPointF, Qt, QUrl
-from PySide6.QtGui import QCursor, QDrag, QGuiApplication
+from PySide6.QtGui import QColor, QCursor, QDrag, QGuiApplication, QPixmap
 from PySide6.QtWidgets import QApplication, QWidget
 
 from dragshift.ui.wheel import WheelWindow
@@ -29,6 +30,7 @@ MOUSEEVENTF_MOVE, MOUSEEVENTF_ABSOLUTE = 0x0001, 0x8000
 MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP = 0x0002, 0x0004
 KEYEVENTF_KEYUP = 0x0002
 VK_SHIFT = 0x10
+VK_ESCAPE = 0x1B
 
 
 class MOUSEINPUT(ctypes.Structure):
@@ -93,6 +95,11 @@ class Source(QWidget):
             mime.setUrls([QUrl.fromLocalFile(str(self.path))])
         drag = QDrag(self)
         drag.setMimeData(mime)
+        # Explorer attaches a drag image (DragImageBits); the shell draws it as SysDragImage.
+        image = QPixmap(64, 64)
+        image.fill(QColor(80, 140, 220, 160))
+        drag.setPixmap(image)
+        drag.setHotSpot(QPoint(32, 32))
         # What Explorer offers for a file: copy, move or link, with Move the default.
         self.result = drag.exec(
             Qt.DropAction.CopyAction | Qt.DropAction.MoveAction | Qt.DropAction.LinkAction,
@@ -114,7 +121,13 @@ def physical(p: QPoint, dpr: float, screen_w: int, screen_h: int) -> tuple[int, 
     return int(p.x() * dpr * 65535 / (screen_w - 1)), int(p.y() * dpr * 65535 / (screen_h - 1))
 
 
-def drag_onto(app: QApplication, source: Source, wheel: WheelWindow, target_local: QPoint) -> str:
+def drag_onto(
+    app: QApplication,
+    source: Source,
+    wheel: WheelWindow,
+    target_local: QPoint,
+    on_arrival: Callable[[], None] | None = None,
+) -> str:
     screen = QGuiApplication.primaryScreen()
     dpr = screen.devicePixelRatio()
     w, h = int(screen.size().width() * dpr), int(screen.size().height() * dpr)
@@ -140,6 +153,9 @@ def drag_onto(app: QApplication, source: Source, wheel: WheelWindow, target_loca
         for i in range(1, steps + 1):
             move(p0[0] + (p1[0] - p0[0]) * i // steps, p0[1] + (p1[1] - p0[1]) * i // steps)
         time.sleep(0.4)
+        if on_arrival:
+            on_arrival()  # e.g. press Esc while hovering the petal
+            time.sleep(0.5)
         mouse(MOUSEEVENTF_LEFTUP)
         key(VK_SHIFT, up=True)
 
