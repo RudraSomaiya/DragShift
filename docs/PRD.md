@@ -375,7 +375,7 @@ Progress from workers comes back through a `multiprocessing.Manager().Queue()`, 
 ### 9.3 Repository layout
 ```
 pyproject.toml  uv.lock  README.md  LICENSE  CLAUDE.md  CONTRIBUTING.md  .pre-commit-config.yaml  .gitignore
-.github/ workflows/ci.yml  pull_request_template.md  CODEOWNERS  ISSUE_TEMPLATE/
+.github/ workflows/ci.yml  CODEOWNERS  ISSUE_TEMPLATE/
 docs/ PRD.md  architecture.md  manual-test-checklist.md  jira-import.csv
 src/dragshift/
   __init__.py  __main__.py            # argparse CLI: (default) run | --background | convert | tool | ops
@@ -660,7 +660,7 @@ Until a dependency merges, work against its interface in §9.4 (stub it).
 ## 13. Engineering workflow
 - **Branches:** `main` is protected (PR + 1 approval + CI green; squash merge only). Work happens in short-lived branches named `<type>/DS-<n>-<slug>`, e.g. `feat/DS-13-image-converters`. Types: `feat`, `fix`, `docs`, `chore`, `refactor`, `test`, `spike`.
 - **Commits:** Conventional Commits that include the Jira key, e.g. `feat(engine): add HEIC to JPG [DS-13]`.
-- **PR title:** `DS-13 feat(engine): image converters`. The description uses the PR template: what changed, FRs covered, screenshots/GIFs for UI work, manual checklist items ticked, and RAM numbers when relevant.
+- **PR title:** `DS-13 feat(engine): image converters`. The description covers: what changed, FRs covered, screenshots/GIFs for UI work, manual checklist items ticked, and RAM numbers when relevant.
 - **Reviews:** the other dev reviews within 4 working hours. Run Claude Code `/code-review` before requesting a human review.
 - **Definition of Done:** acceptance criteria met · tests added/updated · CI green · 1 approval · relevant manual checklist items ticked · docs/PRD updated if behaviour changed · Jira ticket in Done (automatic on merge).
 - **Rules for AI agents (Claude Code):**
