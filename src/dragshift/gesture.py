@@ -38,6 +38,11 @@ log = logging.getLogger(__name__)
 
 WHEEL_TIMEOUT_MS = 30_000  # FR-1.9: close after this long with no drag input
 DROP_GRACE_MS = 400  # after LMB up over the wheel, wait this long for the drop to arrive
+# Esc also cancels Explorer's OLE drag, and Windows then tells the wheel the drag has left. If the
+# wheel is hidden before that, the shell's drag image (a dimmed icon with a prohibited sign) is
+# orphaned and stays on screen. Measured with a real Explorer drag: 7 of 7 ghosts when closing at
+# once, none in 8 of 8 when closing 100 ms or more after Esc.
+ESC_CLOSE_DELAY_MS = 150
 VK_ESCAPE = 0x1B
 # Left/right/generic virtual keys -> modifier name, as used by config.keys
 MODIFIER_NAMES = {
@@ -100,6 +105,9 @@ class GestureController(QObject):
         self._grace = QTimer(self)  # LMB released over the wheel: wait for the drop
         self._grace.setSingleShot(True)
         self._grace.timeout.connect(self._on_grace_over)
+        self._esc_close = QTimer(self)  # Esc pressed: close once the cancel has reached the wheel
+        self._esc_close.setSingleShot(True)
+        self._esc_close.timeout.connect(self._close_wheel)
         wheel.closed.connect(self._on_wheel_closed)
         self.apply_config(config or Config())
 
@@ -179,8 +187,11 @@ class GestureController(QObject):
         repeat = vk in self._down_vks
         self._down_vks.add(vk)
         if self._state is State.WHEEL_OPEN and vk == VK_ESCAPE:
-            self._close_wheel()  # Esc also cancels the OLE drag itself
             self._to_idle()
+            if ESC_CLOSE_DELAY_MS > 0:
+                self._esc_close.start(ESC_CLOSE_DELAY_MS)  # not now: see ESC_CLOSE_DELAY_MS
+            else:
+                self._close_wheel()  # 0 = the old, racy behaviour (kept for the harness control)
             return
         modifier = MODIFIER_NAMES.get(vk)
         if modifier is None or repeat or vk in self._held_at_press:
@@ -203,6 +214,7 @@ class GestureController(QObject):
             log.debug("modifier during a drag that is not a file drag (root %s)", root_class)
             return
         prefill = self._selection(*self._press_root) if root_class in EXPLORER_CLASSES else []
+        self._esc_close.stop()  # a close left over from an Esc must not hit this new wheel
         self._wheel.open(kind, self._cursor_pos(), prefill)
         self._open_kind = kind
         self._state = State.WHEEL_OPEN
@@ -212,6 +224,7 @@ class GestureController(QObject):
     def _close_wheel(self) -> None:
         self._timeout.stop()
         self._grace.stop()
+        self._esc_close.stop()
         if self._wheel.isVisible():
             self._wheel.close()
 
