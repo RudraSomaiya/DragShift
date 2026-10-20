@@ -393,7 +393,7 @@ src/dragshift/
     autostart.py      # HKCU Run key
     single_instance.py
   ui/
-    theme.py  glass.py  wheel.py  launcher_wheel.py  toast.py  tray.py
+    theme.py  glass.py  wheel.py  wheel_geometry.py  wheel_model.py  launcher_wheel.py  toast.py  tray.py
     dialogs/ base_glass.py  crop.py  add_bg.py  compress.py  pages.py  settings.py
   engine/
     kinds.py          # Kind enum + extension → Kind detection
@@ -458,7 +458,7 @@ class JobManager(QObject):
     def cancel(self, job_id: str) -> None: ...
     def undo(self, job_id: str) -> None: ...
 ```
-`ui/wheel.py` exposes `WheelWindow.open(kind: Wheel, at: QPoint, prefill: list[Path])`, `.swap(kind)`, `.close()`, and the signal `dropped(op_id: str, paths: list[Path])`.
+`ui/wheel.py` exposes `WheelWindow.open(kind: Wheel, at: QPoint, prefill: list[Path])`, `.swap(kind)`, `.close()`, and the signal `dropped(op_id: str, paths: list[Path])`. It also exposes `closed()` (emitted after any close, including a drop anywhere, FR-1.9, so `gesture.py` can go back to IDLE) and `set_ordering(pinned, usage)` (FR-2.2: config pins and `history.json` usage counts, applied the next time a wheel opens). Wheel geometry and the petal model live in `ui/wheel_geometry.py` and `ui/wheel_model.py`.
 `gesture.py` connects `dropped` → (open a dialog if `op.dialog`) → `JobManager.submit`.
 
 ### 9.5 Gesture state machine (`gesture.py`)
@@ -492,7 +492,9 @@ LAUNCHER_OPEN ──click / 1-8 / Esc / outside click / 10 s──► IDLE
 - **Full-screen check:** `shell32.SHQueryUserNotificationState(byref(state))`.
 - **Focused control:** `GetGUIThreadInfo(GetWindowThreadProcessId(fg), byref(info))` → `info.hwndFocus` → class name.
 - **Wheel window flags:** `Qt.FramelessWindowHint | Qt.Tool | Qt.WindowStaysOnTopHint | Qt.WindowDoesNotAcceptFocus`, with `WA_TranslucentBackground`, `WA_ShowWithoutActivating`, and `setAcceptDrops(True)`.
-- **Drop:** accept in `dragEnterEvent` and `dragMoveEvent` **only** over enabled petals (`event.acceptProposedAction()` is **forbidden**; use `setDropAction(Qt.CopyAction); accept()`).
+- **Drop:**
+  - `dragMoveEvent` and `dropEvent` accept **only** over enabled petals (`event.acceptProposedAction()` is **forbidden**; use `setDropAction(Qt.CopyAction); accept()`), and `ignore()` everywhere else.
+  - `dragEnterEvent` **always** accepts, with `CopyAction` only. Windows sends later moves and the drop only to a target that accepted the enter, and the wheel opens with the cursor on the hub, so an ignored first enter leaves the wheel dead. Qt follows the enter at once with a move, so the effect reported to Explorer is still "none" over the hub (checked against the window's real OLE `IDropTarget`, DS-9).
 - **Accent colour:** `DwmGetColorizationColor`, or `HKCU\Software\Microsoft\Windows\DWM\AccentColor` (ABGR).
 - **Store apps list (Launcher picker):** `powershell -NoProfile -Command "Get-StartApps | ConvertTo-Json"`, run in a worker.
 
