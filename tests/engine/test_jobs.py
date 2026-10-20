@@ -2,6 +2,7 @@
 
 import hashlib
 import multiprocessing
+import os
 import time
 from collections.abc import Iterator
 from concurrent.futures import Future
@@ -96,13 +97,16 @@ def test_worker_crash_fails_the_job_and_next_job_gets_a_fresh_pool(
     assert run(qtbot, jm, "convert.image.jpg", [src]).ok
 
 
-def test_submit_blocks_the_qt_thread_only_briefly(jm: JobManager, tmp_path: Path) -> None:
+def test_submit_blocks_the_qt_thread_only_briefly(qtbot, jm: JobManager, tmp_path: Path) -> None:
     src = tmp_path / "a.png"
     Image.new("RGB", (8, 8)).save(src)
-    t0 = time.perf_counter()
-    jm.submit("convert.image.jpg", [src])
-    # Starting the pool must not block the UI (no Manager process: was ~600 ms).
-    assert time.perf_counter() - t0 < 0.25
+    with qtbot.waitSignal(jm.finished, timeout=POOL_TIMEOUT_MS):  # don't abandon the job
+        t0 = time.perf_counter()
+        jm.submit("convert.image.jpg", [src])
+        blocked = time.perf_counter() - t0
+    # Starting the pool must not block the UI. With a Manager process it was ~600 ms; locally
+    # it is now ~10-30 ms. The limit leaves room for slow CI runners.
+    assert blocked < 0.5, f"submit() blocked {blocked * 1e3:.0f} ms"
 
 
 def test_stale_crash_does_not_stop_the_new_pool(jm: JobManager, tmp_path: Path) -> None:
@@ -124,6 +128,63 @@ def test_a_failed_rename_keeps_the_other_outputs(jm: JobManager, tmp_path: Path)
     assert res.outputs == [tmp_path / "a.jpg"]
     assert not res.ok and res.message.startswith("Could not save b.jpg")
     assert res.undo == {"type": "trash", "paths": [tmp_path / "a.jpg"]}
+
+
+def report_progress(paths, params, ctx):
+    for i in range(1, 21):
+        ctx.progress(i / 20, f"step {i}")
+    return []
+
+
+def wait_for_cancel(paths, params, ctx):
+    ctx.output_path(paths[0], ext="txt")  # a .part next to the source
+    deadline = time.monotonic() + 30
+    while not ctx.cancelled() and time.monotonic() < deadline:
+        time.sleep(0.02)
+    return []
+
+
+def worker_op(monkeypatch: pytest.MonkeyPatch, name: str) -> str:
+    o = Op(f"t.{name}", "tools", name, frozenset({Kind.IMAGE}), f"{__name__}:{name}")
+    monkeypatch.setitem(registry._OPS, o.id, o)
+    return o.id
+
+
+def test_pool_progress_all_arrives_before_finished(
+    qtbot, jm: JobManager, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    src = tmp_path / "a.png"
+    Image.new("RGB", (8, 8)).save(src)
+    events: list[tuple] = []
+    jm.progressed.connect(lambda _id, fraction, _text: events.append(("p", fraction)))
+    jm.finished.connect(lambda *_: events.append(("done",)))
+    run(qtbot, jm, worker_op(monkeypatch, "report_progress"), [src])
+    assert events[-1] == ("done",)
+    assert [e[1] for e in events[:-1]] == [i / 20 for i in range(1, 21)]
+
+
+def test_shutdown_cancels_running_jobs_so_no_part_is_left(
+    qtbot, jm: JobManager, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    src = tmp_path / "a.png"
+    Image.new("RGB", (8, 8)).save(src)
+    jm.submit(worker_op(monkeypatch, "wait_for_cancel"), [src])
+    part = tmp_path / "a.txt.part"
+    qtbot.waitUntil(part.exists, timeout=POOL_TIMEOUT_MS)
+    jm.shutdown()  # app quit while the job is running
+    qtbot.waitUntil(lambda: not part.exists(), timeout=10_000)
+    qtbot.waitUntil(lambda: not multiprocessing.active_children(), timeout=10_000)
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["a.png"]
+
+
+def test_stale_cancel_flags_are_pruned_on_pool_start(jm: JobManager, cancel_dir: Path) -> None:
+    old, fresh = cancel_dir / "old-job", cancel_dir / "fresh-job"
+    old.touch()
+    fresh.touch()
+    stale = time.time() - JobManager.STALE_FLAG_S - 60
+    os.utime(old, (stale, stale))
+    jm._ensure_pool()
+    assert not old.exists() and fresh.exists()
 
 
 # --- "ui" ops run inline, which tests grouping, cancel and progress without spawning ----------

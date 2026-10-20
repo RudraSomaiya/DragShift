@@ -42,10 +42,11 @@ _loaded = False
 
 
 def register(op: Op) -> Op:
-    if op.id in _OPS:
-        if _OPS[op.id] == op:
-            return op  # same module imported again after a failed load
-        raise ValueError(f"duplicate op id: {op.id}")
+    known = _OPS.get(op.id)
+    if known is not None and known.func != op.func:
+        raise ValueError(f"duplicate op id: {op.id} ({known.func} and {op.func})")
+    # Same func = the same module imported again after a failed load (its lambdas are new
+    # objects, so Op equality would not match); keep the newest definition.
     _OPS[op.id] = op
     return op
 

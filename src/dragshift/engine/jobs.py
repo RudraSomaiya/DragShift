@@ -1,17 +1,19 @@
 """JobManager: runs Ops in a lazy worker pool and reports back on the Qt thread (PRD §9.2, §9.4).
 
 - The pool (2 spawn workers) is created on the first worker job and shut down after
-  ``IDLE_SHUTDOWN_MS`` with no jobs (NFR-1). Progress comes back through a plain multiprocessing
-  queue handed to each worker at start-up; cancel flags are empty files in a temp folder. No
-  Manager process, which would block the Qt thread for ~300 ms on every pool start.
+  ``IDLE_SHUTDOWN_MS`` with no jobs (NFR-1). Progress comes back through a
+  ``multiprocessing.SimpleQueue`` handed to each worker at start-up; cancel flags are empty files
+  in ``CANCEL_DIR``. No Manager process, which would block the Qt thread for ~300 ms on every
+  pool start.
 - Workers write ``*.part`` files; on success they are renamed to their final names here.
 - A Qt timer polls futures and drains progress while jobs run, so signals fire on the Qt thread.
 """
 
 import multiprocessing
+import os
 import queue
-import shutil
 import tempfile
+import time
 import uuid
 from concurrent.futures import Future, ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
@@ -60,13 +62,18 @@ class JobManager(QObject):
     IDLE_SHUTDOWN_MS = 60_000
     POLL_MS = 50
     MAX_WORKERS = 2
+    # One fixed folder (not a new temp dir per pool start), so a crashed UI leaks nothing new.
+    CANCEL_DIR = Path(
+        os.environ.get("LOCALAPPDATA") or tempfile.gettempdir(), "DragShift", "cancel"
+    )
+    STALE_FLAG_S = 3600  # flags left by jobs abandoned on quit are pruned after this
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._jobs: dict[str, _Job] = {}
         self._pool: ProcessPoolExecutor | None = None
-        self._queue: Any = None  # multiprocessing.Queue while the pool lives
-        self._cancel_dir: CancelDir | None = None
+        self._queue: Any = None  # multiprocessing.SimpleQueue while the pool lives
+        self._cancel_dir = CancelDir(self.CANCEL_DIR)
         self._local_queue: queue.SimpleQueue = queue.SimpleQueue()  # progress of "ui" ops
         self._local_cancel: dict[str, bool] = {}
         self._poll = QTimer(self)
@@ -119,16 +126,21 @@ class JobManager(QObject):
             return  # finished already, or never started
         if job.pool is None:
             self._local_cancel[job_id] = True
-        elif job.pool is self._pool and self._cancel_dir is not None:
-            self._cancel_dir[job_id] = True  # the worker sees it through ctx.cancelled()
+        else:
+            self._cancel_dir.set(job_id)  # the worker sees it through ctx.cancelled()
 
     def undo(self, job_id: str) -> None:
         raise NotImplementedError("Undo lands in DS-18 (FR-5.6)")
 
     def shutdown(self) -> None:
-        """Stop the pool now. Running jobs are abandoned; call on app quit."""
+        """Stop the pool now; call on app quit. Running worker jobs are cancelled, so they
+        delete their ``.part`` files instead of leaving them next to the sources."""
         self._poll.stop()
         self._idle.stop()
+        for job_id, job in self._jobs.items():
+            if job.pool is not None and not job.future.cancel():
+                self._cancel_dir.set(job_id)  # left in place: the worker may outlive us
+        self._jobs.clear()
         self._stop_pool()
 
     # --- internals ---------------------------------------------------------------------------
@@ -139,16 +151,13 @@ class JobManager(QObject):
         if self._queue is not None:
             self._queue.close()
             self._queue = None
-        if self._cancel_dir is not None:
-            shutil.rmtree(self._cancel_dir.path, ignore_errors=True)
-            self._cancel_dir = None
 
     def _ensure_pool(self) -> None:
         if self._pool is not None:
             return
+        self._prepare_cancel_dir()
         mp = multiprocessing.get_context("spawn")
-        self._queue = mp.Queue()
-        self._cancel_dir = CancelDir(Path(tempfile.mkdtemp(prefix="dragshift-cancel-")))
+        self._queue = mp.SimpleQueue()
         self._pool = ProcessPoolExecutor(
             max_workers=self.MAX_WORKERS,
             mp_context=mp,
@@ -163,30 +172,47 @@ class JobManager(QObject):
         ctx = JobContext(job_id, None, self._cancel_dir)  # None: the worker's own queue
         return self._pool.submit(run_job, func, groups, params, ctx)
 
+    def _prepare_cancel_dir(self) -> None:
+        """Create CANCEL_DIR and prune flags older than STALE_FLAG_S (jobs abandoned on quit)."""
+        folder = self._cancel_dir.path
+        folder.mkdir(parents=True, exist_ok=True)
+        cutoff = time.time() - self.STALE_FLAG_S
+        for flag in folder.iterdir():
+            try:
+                if flag.stat().st_mtime < cutoff:
+                    flag.unlink()
+            except OSError:
+                pass
+
     def _shutdown_if_idle(self) -> None:
         if not self._jobs:
             self.shutdown()
 
     def _drain_progress(self) -> None:
-        for q in (self._local_queue, self._queue):
-            while q is not None:
-                try:
-                    job_id, fraction, text = q.get_nowait()
-                except queue.Empty:
-                    break
-                if job_id in self._jobs:
-                    self.progressed.emit(job_id, fraction, text)
+        items = []
+        while True:
+            try:
+                items.append(self._local_queue.get_nowait())
+            except queue.Empty:
+                break
+        while self._queue is not None and not self._queue.empty():
+            items.append(self._queue.get())
+        for job_id, fraction, text in items:
+            if job_id in self._jobs:
+                self.progressed.emit(job_id, fraction, text)
 
     def _tick(self) -> None:
+        # Snapshot finished jobs *before* draining: a worker's progress is written to the pipe
+        # before its result is sent, so this drain sees all of it before `finished` is emitted.
+        done = [(job_id, job) for job_id, job in self._jobs.items() if job.future.done()]
         self._drain_progress()
-        for job_id, job in list(self._jobs.items()):
-            if job.future.done():
-                del self._jobs[job_id]
-                result = self._result(job)
-                if job.pool is not None and job.pool is self._pool and self._cancel_dir:
-                    self._cancel_dir.pop(job_id)
-                self._local_cancel.pop(job_id, None)
-                self.finished.emit(job_id, result)
+        for job_id, job in done:
+            del self._jobs[job_id]
+            result = self._result(job)
+            if job.pool is not None:
+                self._cancel_dir.clear(job_id)
+            self._local_cancel.pop(job_id, None)
+            self.finished.emit(job_id, result)
         if not self._jobs:
             self._poll.stop()
             if self._pool is not None:

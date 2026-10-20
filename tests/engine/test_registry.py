@@ -26,12 +26,14 @@ class TestRegistry:
     def test_duplicate_id_rejected(self) -> None:
         make("a")
         with pytest.raises(ValueError, match="duplicate"):
-            make("a", label="Other")
+            make("a", func="other.module:f")
 
-    def test_reregistering_the_same_op_is_harmless(self) -> None:
-        # A module that failed half-way through loading is imported again on the next call.
-        first = make("a")
-        assert make("a") == first
+    def test_reregistering_the_same_func_replaces_the_op(self) -> None:
+        # A module that failed half-way through loading is imported again on the next call;
+        # its `available` lambdas are new objects, so the Ops are not ==.
+        make("a", available=lambda: True)
+        again = make("a", available=lambda: False)
+        assert get("a") is again
 
     def test_decorator_records_dotted_path_and_returns_function(self) -> None:
         @op(id="x", wheel="tools", label="X", kinds=IMG)

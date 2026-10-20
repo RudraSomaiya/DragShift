@@ -10,7 +10,10 @@ from typing import Any
 
 PART = ".part"
 
-# This worker process's progress queue, set once by init_worker() when the pool starts it.
+# This worker process's progress queue, set once by init_worker() when the pool starts it. It is
+# a multiprocessing.SimpleQueue: put() writes straight into the pipe (no feeder thread), so a
+# worker never hangs at exit flushing a buffer, and every progress message is in the pipe
+# before the job's result is sent.
 _worker_queue: Any = None
 
 
@@ -46,10 +49,10 @@ class CancelDir:
     def __contains__(self, job_id: object) -> bool:
         return (self.path / str(job_id)).exists()
 
-    def __setitem__(self, job_id: str, _value: object) -> None:
+    def set(self, job_id: str) -> None:
         (self.path / job_id).touch()
 
-    def pop(self, job_id: str, _default: object = None) -> None:
+    def clear(self, job_id: str) -> None:
         (self.path / job_id).unlink(missing_ok=True)
 
 
@@ -74,30 +77,43 @@ class JobContext:
         """
         # The FR-5.3 Downloads fallback for read-only folders lands in DS-18.
         out_dir = folder if folder is not None else src.parent
-        if not out_dir.exists():
-            out_dir.mkdir(parents=True)
-            self.made_dirs.append(out_dir)
+        self._make_dirs(out_dir)
         stem = src.name if src.is_dir() else src.stem
         base = out_dir / f"{stem}{f' {label}' if label else ''}.{ext.lstrip('.')}"
         n = 1
         while True:
             final = numbered(base, n)
             part = final.with_name(final.name + PART)
-            n += 1
             if final.exists():
+                n += 1
                 continue
             try:
                 part.open("x").close()  # exclusive create = atomic reservation
             except FileExistsError:
+                n += 1
+                continue
+            except FileNotFoundError:
+                # Another job's failure cleanup removed the shared, empty folder: recreate it.
+                self._make_dirs(out_dir)
                 continue
             self.reserved.append(part)
             return part
+
+    def _make_dirs(self, folder: Path) -> None:
+        """Create ``folder`` and any missing parents, remembering each one for cleanup."""
+        missing = []
+        while not folder.exists():
+            missing.append(folder)
+            folder = folder.parent
+        for d in reversed(missing):  # top-most first
+            d.mkdir(exist_ok=True)
+            self.made_dirs.append(d)
 
     def discard(self, parts: list[Path]) -> None:
         """Delete these reserved ``.part`` files and any output folder this job left empty."""
         for part in parts:
             part.unlink(missing_ok=True)
-        for folder in reversed(self.made_dirs):
+        for folder in reversed(self.made_dirs):  # deepest first
             try:
                 folder.rmdir()  # only succeeds when empty
             except OSError:
@@ -108,7 +124,10 @@ class JobContext:
         if queue is not None:
             i, count = self._slot
             overall = (i + min(max(fraction, 0.0), 1.0)) / count
-            queue.put((self.job_id, overall, text))
+            try:
+                queue.put((self.job_id, overall, text))
+            except OSError:
+                pass  # the UI process has gone away; progress is best-effort
 
     def cancelled(self) -> bool:
         return self.job_id in self._cancel

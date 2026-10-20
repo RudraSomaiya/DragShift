@@ -86,7 +86,7 @@ def fail_on_bad(paths, params, ctx):
 
 
 def fail_in_new_folder(paths, params, ctx):
-    ctx.output_path(paths[0], ext="png", folder=paths[0].parent / "doc pages")
+    ctx.output_path(paths[0], ext="png", folder=paths[0].parent / "export" / "doc pages")
     raise RuntimeError("page 3 failed")
 
 
@@ -144,7 +144,7 @@ def test_one_bad_file_keeps_the_other_outputs(tmp_path: Path) -> None:
     assert not (tmp_path / "bad.txt.part").exists()
 
 
-def test_failure_removes_the_output_folder_it_created(tmp_path: Path) -> None:
+def test_failure_removes_the_output_folders_it_created(tmp_path: Path) -> None:
     src = src_file(tmp_path, "doc.pdf")
     res = run_job(fn("fail_in_new_folder"), [[src]], {}, JobContext("j"))
     assert res["message"] == "RuntimeError: page 3 failed"
@@ -162,7 +162,26 @@ def test_cancel_dir_flags(tmp_path: Path) -> None:
     flags = CancelDir(tmp_path)
     ctx = JobContext("j1", cancel_flags=flags)
     assert not ctx.cancelled()
-    flags["j1"] = True
+    flags.set("j1")
     assert ctx.cancelled() and "j2" not in flags
-    flags.pop("j1")
+    flags.clear("j1")
     assert not ctx.cancelled()
+
+
+def test_folder_removed_by_another_jobs_cleanup_is_recreated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pages = tmp_path / "doc pages"
+    pages.mkdir()  # exists, so this job does not own it
+    real_open = Path.open
+    raced: list[bool] = []
+
+    def open_after_race(self: Path, *args, **kwargs):
+        if not raced:  # another job's failure cleanup rmdirs the empty folder right now
+            raced.append(True)
+            pages.rmdir()
+        return real_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", open_after_race)
+    part = JobContext("j").output_path(tmp_path / "doc 001.pdf", ext="png", folder=pages)
+    assert part == pages / "doc 001.png.part" and part.exists()
