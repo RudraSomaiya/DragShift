@@ -26,7 +26,7 @@ uv run ruff check . ; uv run ruff format .
 ## Git workflow (main is protected)
 - Branch: `<type>/DS-<n>-<slug>`, e.g. `feat/DS-13-image-converters`. Never commit to `main`.
 - Commit: Conventional Commits that include the key, e.g. `feat(engine): add HEIC to JPG [DS-13]`.
-- PR title: `DS-13 feat(engine): image converters`. One story per PR. Fill in the PR template, including the manual checklist items from `docs/manual-test-checklist.md`.
+- PR title: `DS-13 feat(engine): image converters`. One story per PR. In the description, say what changed and which FRs it covers, and paste the items from `docs/manual-test-checklist.md` that your change affects, ticked.
 - Run `/code-review` before asking the teammate for review.
 
 ## Layout
