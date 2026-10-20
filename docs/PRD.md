@@ -261,7 +261,7 @@ Neutral, cool, frosted liquid glass that takes its colour from what is behind it
 | `glass.highlight` (top-left inner rim) | `rgba(255,255,255,0.60)` → 0 | `rgba(255,255,255,0.28)` → 0 |
 | `text.primary` | `#0B1220` | `#F2F5FA` |
 | `text.secondary` | `rgba(11,18,32,0.62)` | `rgba(242,245,250,0.62)` |
-| `accent` | Windows accent (`DwmGetColorizationColor`); fallback **Glacier** `#4C8DFF` | same |
+| `accent` | Windows accent (DWM `AccentColor`, see §9.6); fallback **Glacier** `#4C8DFF` | same |
 | `accent.gradient` | `#4C8DFF → #8B6CFF` (fallback only) | same |
 | `petal.hover` | `accent @ 55 %` + specular sheen | `accent @ 65 %` + sheen |
 | `shadow` | `0 12px 32px rgba(0,0,0,0.30)` | `0 12px 32px rgba(0,0,0,0.50)` |
@@ -458,7 +458,7 @@ class JobManager(QObject):
     def cancel(self, job_id: str) -> None: ...
     def undo(self, job_id: str) -> None: ...
 ```
-`ui/wheel.py` exposes `WheelWindow.open(kind: Wheel, at: QPoint, prefill: list[Path])`, `.swap(kind)`, `.close()`, and the signal `dropped(op_id: str, paths: list[Path])`. It also exposes `closed()` (emitted after any close, including a drop anywhere, FR-1.9, so `gesture.py` can go back to IDLE) and `set_ordering(pinned, usage)` (FR-2.2: config pins and `history.json` usage counts, applied the next time a wheel opens). Wheel geometry and the petal model live in `ui/wheel_geometry.py` and `ui/wheel_model.py`.
+`ui/wheel.py` exposes `WheelWindow.open(kind: Wheel, at: QPoint, prefill: list[Path])`, `.swap(kind)`, `.close()`, and the signal `dropped(op_id: str, paths: list[Path])`. It also exposes `closed()` (emitted after any close, including a drop anywhere, FR-1.9, so `gesture.py` can go back to IDLE), `set_ordering(pinned, usage)` (FR-2.2: config pins and `history.json` usage counts, applied the next time a wheel opens), and `set_appearance(appearance)` (§8.2, NFR-8: the config's `appearance` section, resolved against the Windows settings each time a wheel opens). Wheel geometry and the petal model live in `ui/wheel_geometry.py` and `ui/wheel_model.py`.
 `gesture.py` connects `dropped` → (open a dialog if `op.dialog`) → `JobManager.submit`.
 
 ### 9.5 Gesture state machine (`gesture.py`)
@@ -495,7 +495,7 @@ LAUNCHER_OPEN ──click / 1-8 / Esc / outside click / 10 s──► IDLE
 - **Drop:**
   - `dragMoveEvent` and `dropEvent` accept **only** over enabled petals (`event.acceptProposedAction()` is **forbidden**; use `setDropAction(Qt.CopyAction); accept()`), and `ignore()` everywhere else.
   - `dragEnterEvent` **always** accepts, with `CopyAction` only. Windows sends later moves and the drop only to a target that accepted the enter, and the wheel opens with the cursor on the hub, so an ignored first enter leaves the wheel dead. Qt follows the enter at once with a move, so the effect reported to Explorer is still "none" over the hub (checked against the window's real OLE `IDropTarget`, DS-9).
-- **Accent colour:** `DwmGetColorizationColor`, or `HKCU\Software\Microsoft\Windows\DWM\AccentColor` (ABGR).
+- **Accent colour:** `HKCU\Software\Microsoft\Windows\DWM\AccentColor` (ABGR), else `DwmGetColorizationColor`. The API can return a darker shade than the accent the user picked (#5E0074 for #680081, measured in DS-12), so it is only the fallback.
 - **Store apps list (Launcher picker):** `powershell -NoProfile -Command "Get-StartApps | ConvertTo-Json"`, run in a worker.
 
 ---
@@ -525,6 +525,7 @@ LAUNCHER_OPEN ──click / 1-8 / Esc / outside click / 10 s──► IDLE
 - Unknown keys are preserved.
 - An invalid file is backed up to `config.bad.json` and replaced with defaults.
 - `version` drives migrations.
+- `appearance`: `theme` is `system` | `light` | `dark`; `accent` is `system` or `#RRGGBB`; `reduced_motion` is `system` | `on` | `off`. `system` follows Windows (§8.2, NFR-8).
 
 ### 10.2 `%APPDATA%\DragShift\history.json`
 ```json

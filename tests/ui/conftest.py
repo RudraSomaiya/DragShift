@@ -7,10 +7,30 @@ import pytest
 # Never let a UI test open a real window: the wheel is always-on-top. CI sets this too.
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import QRect
+from PySide6.QtGui import QColor, QImage
+
+from dragshift.config import Appearance
 from dragshift.engine.kinds import Kind
 from dragshift.engine.registry import Op
+from dragshift.platform import screen
 from dragshift.ui import wheel as wheel_module
 from dragshift.ui.wheel import WheelWindow
+
+# Fixed appearance for wheel tests: no Windows settings, and no motion unless a test asks for it.
+STILL = Appearance(theme="dark", accent="#4C8DFF", reduced_motion="on")
+
+
+@pytest.fixture(autouse=True)
+def fake_desktop(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The glass snapshot is a flat grey image instead of the real desktop."""
+
+    def grab(rect: QRect) -> QImage:
+        img = QImage(rect.width(), rect.height(), QImage.Format.Format_RGB32)
+        img.fill(QColor(90, 110, 140))
+        return img
+
+    monkeypatch.setattr(screen, "grab", grab)
 
 
 @pytest.fixture
@@ -54,5 +74,6 @@ def serve_ops(
 @pytest.fixture
 def wheel(qtbot) -> WheelWindow:
     w = WheelWindow()
+    w.set_appearance(STILL)
     qtbot.addWidget(w)
     return w

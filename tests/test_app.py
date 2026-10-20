@@ -1,5 +1,6 @@
 """App wiring (DS-11): a drop on a petal becomes a job, and the source is never touched."""
 
+import dataclasses
 import hashlib
 import subprocess
 import sys
@@ -11,7 +12,7 @@ from pytestqt.qtbot import QtBot
 
 from dragshift import app as app_module
 from dragshift.app import App
-from dragshift.config import ConfigStore
+from dragshift.config import Appearance, ConfigStore
 from dragshift.engine import registry
 from dragshift.engine.jobs import JobManager, JobResult
 from dragshift.engine.registry import Op
@@ -83,6 +84,14 @@ def test_the_real_pipeline_converts_and_leaves_the_source_alone(
 def test_hooks_are_not_started_by_building_the_app(the_app: App) -> None:
     assert not the_app.hooks.is_installed()
     the_app.shutdown()  # safe when nothing was started
+
+
+def test_appearance_changes_reach_the_wheel(the_app: App, monkeypatch: pytest.MonkeyPatch) -> None:
+    got: list[Appearance] = []
+    monkeypatch.setattr(the_app.wheel, "set_appearance", got.append)
+    new = Appearance(theme="light", accent="#00FF00", reduced_motion="on")
+    the_app.store.update(dataclasses.replace(the_app.store.config, appearance=new))
+    assert got == [new]
 
 
 def test_app_module_keeps_the_ui_process_lean() -> None:

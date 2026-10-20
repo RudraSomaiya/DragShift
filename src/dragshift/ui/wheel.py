@@ -1,23 +1,39 @@
-"""The wheel window (PRD §5.1-§5.2, §8.3, §9.4, §9.6).
+"""The wheel window (PRD §5.1-§5.2, §8.2-§8.5, §9.4, §9.6).
 
 Hover and drop come from Qt's drag events: during an OLE drag the window gets no mouse events.
-Painting is interim flat paint; DS-12 replaces it with the glass renderer, theme tokens and motion.
+The glass is rendered once per open from a snapshot of the desktop taken before the window shows
+(``ui/glass.py``). Petals, the hub, hover and motion are painted on top of it every frame.
 """
 
-from collections.abc import Mapping, Sequence
+import math
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from PySide6.QtCore import QFileInfo, QMimeData, QPoint, QPointF, QRect, QRectF, Qt, QTimer, Signal
+from PySide6.QtCore import (
+    QEasingCurve,
+    QElapsedTimer,
+    QFileInfo,
+    QMimeData,
+    QPoint,
+    QPointF,
+    QRect,
+    QRectF,
+    QSize,
+    Qt,
+    QTimer,
+    QVariantAnimation,
+    Signal,
+)
 from PySide6.QtGui import (
     QCloseEvent,
     QColor,
     QDragEnterEvent,
     QDragMoveEvent,
     QDropEvent,
-    QFont,
     QFontMetrics,
     QGuiApplication,
+    QImage,
     QPainter,
     QPainterPath,
     QPaintEvent,
@@ -27,8 +43,24 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QFileIconProvider, QWidget
 
+from dragshift.config import Appearance
 from dragshift.engine.registry import Wheel, ops_for
+from dragshift.platform import screen
+from dragshift.ui import glass
 from dragshift.ui import wheel_geometry as geo
+from dragshift.ui.theme import (
+    CLOSE_MS,
+    HOVER_MS,
+    OPEN_MS,
+    OPEN_OVERSHOOT,
+    OPEN_SCALE_FROM,
+    PETAL_STAGGER_MS,
+    RING_MS,
+    SWAP_MS,
+    Theme,
+    label_font,
+    resolve,
+)
 from dragshift.ui.wheel_model import (
     Petal,
     WheelLayout,
@@ -37,16 +69,72 @@ from dragshift.ui.wheel_model import (
     order_ops,
 )
 
-# Interim flat paint (see the module docstring); the accent is the Glacier fallback of §8.2.
-_ACCENT = QColor("#4C8DFF")
-_DISC = QColor(22, 27, 38, 205)
-_PETAL = QColor(255, 255, 255, 26)
-_HUB = QColor(255, 255, 255, 30)
-_STROKE = QColor(255, 255, 255, 70)
-_TEXT = QColor("#F2F5FA")
-_TEXT_2 = QColor(242, 245, 250, 158)
-_HOVER_ALPHA = 0.55  # petal.hover, dark theme is 0.65 (§8.2)
 _DISABLED_OPACITY = 0.35  # §8.3
+_PILL_ALPHA = 0.85  # the hub's label pill
+_FRAME_MS = 16  # hover transition tick: 60 fps (NFR-2)
+
+
+def _curve(kind: QEasingCurve.Type, overshoot: float | None = None) -> QEasingCurve:
+    curve = QEasingCurve(kind)
+    if overshoot is not None:
+        curve.setOvershoot(overshoot)
+    return curve
+
+
+_OUT_BACK = _curve(QEasingCurve.Type.OutBack, OPEN_OVERSHOOT)  # §8.5 open
+_IN_CUBIC = _curve(QEasingCurve.Type.InCubic)  # §8.5 close
+_OUT_CUBIC = _curve(QEasingCurve.Type.OutCubic)  # §8.5 More… ring
+
+
+def _mix(a: QColor, b: QColor, f: float) -> QColor:
+    """``a`` at f = 0 to ``b`` at f = 1."""
+    if f <= 0:
+        return a
+    if f >= 1:
+        return b
+    return QColor.fromRgbF(
+        *(x + (y - x) * f for x, y in zip(a.getRgbF(), b.getRgbF(), strict=True))
+    )
+
+
+class _Tween:
+    """A linear 0 to 1 clock over ``ms`` that repaints ``owner`` on every frame. Callers apply
+    their own easing. ``start(0)`` is instant: nothing runs and ``done`` is called at once."""
+
+    def __init__(self, owner: QWidget, done: Callable[[], None] | None = None) -> None:
+        self._anim = QVariantAnimation(owner)
+        self._anim.setStartValue(0.0)
+        self._anim.setEndValue(1.0)
+        self._anim.valueChanged.connect(owner.update)
+        self._done = done
+        if done is not None:
+            self._anim.finished.connect(done)
+
+    def start(self, ms: int) -> None:
+        self._anim.stop()
+        if ms <= 0:
+            if self._done is not None:
+                self._done()
+            return
+        self._anim.setDuration(ms)
+        self._anim.start()
+
+    def stop(self) -> None:
+        """Stop where it is, without calling ``done``."""
+        self._anim.stop()
+
+    @property
+    def running(self) -> bool:
+        return self._anim.state() == QVariantAnimation.State.Running
+
+    @property
+    def progress(self) -> float:
+        """0 to 1 while running, 1 otherwise."""
+        return float(self._anim.currentValue()) if self.running else 1.0
+
+    @property
+    def elapsed_ms(self) -> float:
+        return float(self._anim.currentTime()) if self.running else math.inf
 
 
 @dataclass(frozen=True)
@@ -56,13 +144,8 @@ class _Shape:
     anchor: QPointF  # label position, relative to the wheel centre
 
 
-def _label_font(pixel_size: int = 11) -> QFont:
-    font = QFont()
-    font.setFamilies(["Segoe UI Variable Text", "Segoe UI"])
-    font.setPixelSize(pixel_size)
-    font.setWeight(QFont.Weight.DemiBold)
-    font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0.4)
-    return font
+def _icon_key(path: Path) -> tuple[str, bool]:
+    return path.suffix.lower(), path.is_dir()
 
 
 def _local_files(mime: QMimeData) -> list[Path]:
@@ -112,23 +195,62 @@ class WheelWindow(QWidget):
         self._icons: QFileIconProvider | None = None
         self._thumbs: dict[tuple[str, bool], QPixmap] = {}
         self._thumb = QPixmap()
-        self._font = _label_font()
+        self._thumb_path: Path | None = None  # whose icon is still to load, after a frame
+        self._font = label_font()
         self._more_timer = QTimer(self)
         self._more_timer.setSingleShot(True)
         self._more_timer.timeout.connect(self._open_ring)
 
+        self._appearance = Appearance()
+        self._theme = resolve(self._appearance)
+        self._glass: glass.Glass | None = None
+        self._levels: dict[int, float] = {}  # hover level per shape, 0 to 1 (§8.3 transition)
+        self._hover_clock = QTimer(self)
+        self._hover_clock.setInterval(_FRAME_MS)
+        self._hover_clock.timeout.connect(self._step_hover)
+        self._hover_dt = QElapsedTimer()
+        self._opening = _Tween(self)
+        self._closing = _Tween(self, done=self._finish_close)
+        self._swapping = _Tween(self)
+        self._ringing = _Tween(self)
+        self._swap_from = QPixmap()  # the previous wheel, cross-faded out on a swap
+        self._close_now = False
+        self._warm_up()
+
     # --- public API (PRD §9.4) ------------------------------------------------------------
     def open(self, kind: Wheel, at: QPoint, prefill: Sequence[Path] = ()) -> None:
         """Show the ``kind`` wheel centred on ``at``, clamped to the monitor's work area."""
+        self._closing.stop()
+        self._swapping.stop()
+        if self.isVisible():
+            self.hide()  # reopened while fading out: keep the old wheel out of the snapshot
+        self._theme = resolve(self._appearance)  # follows Windows changes since the last open
         self._wheel = kind
         self._set_files(list(prefill))
         self._place(at)
+        self._glass = self._render_glass()
+        stagger = PETAL_STAGGER_MS * max(0, self._n_main - 1)
+        self._opening.start(self._theme.ms(OPEN_MS + stagger))
         self.show()
 
     def swap(self, kind: Wheel) -> None:
         """Show another wheel for the same files, in the same place (FR-1.6)."""
+        animate = self.isVisible() and self._theme.ms(SWAP_MS) > 0
+        old = self._render_content() if animate else QPixmap()
         self._wheel = kind
         self._relayout()
+        self._swap_from = old
+        if animate:
+            self._swapping.start(self._theme.ms(SWAP_MS))
+
+    def set_appearance(self, appearance: Appearance) -> None:
+        """Theme, accent and reduced motion from the config (§8.2, NFR-8). Applied on the next
+        open, when Windows' own settings are read again too."""
+        self._appearance = appearance
+
+    @property
+    def theme(self) -> Theme:
+        return self._theme
 
     def set_ordering(
         self,
@@ -148,6 +270,12 @@ class WheelWindow(QWidget):
     def ring_open(self) -> bool:
         return self._ring_open
 
+    @property
+    def animating(self) -> bool:
+        """An open, close, swap, ring or hover animation is running (§8.5)."""
+        tweens = (self._opening, self._closing, self._swapping, self._ringing)
+        return any(t.running for t in tweens) or self._hover_clock.isActive()
+
     def hub_text(self) -> str:
         """What the hub shows below the thumbnail (FR-1.7, FR-1.10)."""
         if self._is_unsupported():
@@ -163,7 +291,10 @@ class WheelWindow(QWidget):
     def _set_files(self, files: list[Path]) -> None:
         self._files = files
         self._unsupported = False
-        self._thumb = self._thumbnail(files[0]) if files else QPixmap()
+        # A new file type's shell icon costs 15-100 ms, so it loads after the first frame
+        # (NFR-2) and shows up during the open animation; known types show at once.
+        self._thumb_path = files[0] if files else None
+        self._thumb = self._thumbs.get(_icon_key(files[0]), QPixmap()) if files else QPixmap()
         self._relayout()
 
     def _relayout(self) -> None:
@@ -178,6 +309,8 @@ class WheelWindow(QWidget):
         self._shapes = self._shapes_for(main, geo.R_IN, geo.R_OUT)
         self._shapes += self._shapes_for(ring, geo.RING_IN, geo.RING_OUT)
         self._ring_open = False
+        self._ringing.stop()
+        self._levels.clear()
         self._set_hover(None)
         if self.isVisible():
             self._apply_size(geo.WIN)
@@ -216,7 +349,17 @@ class WheelWindow(QWidget):
         if self._layout.ring and not self._ring_open:
             self._ring_open = True
             self._apply_size(geo.RING_WIN)
+            self._ringing.start(self._theme.ms(RING_MS))
             self.update()
+
+    def _render_glass(self) -> glass.Glass:
+        """§8.4: snapshot the desktop under the wheel (and its ring) and render the glass."""
+        scr = QGuiApplication.screenAt(self._centre_global) or QGuiApplication.primaryScreen()
+        half = glass.SIZE // 2
+        rect = QRect(self._centre_global - QPoint(half, half), QSize(glass.SIZE, glass.SIZE))
+        snapshot = screen.grab(screen.physical_rect(rect, scr))
+        snapshot.setDevicePixelRatio(scr.devicePixelRatio())
+        return glass.render(snapshot, self._theme)
 
     # --- hover and hit-testing --------------------------------------------------------------
     def _hit(self, pos: QPointF) -> int | None:
@@ -227,12 +370,35 @@ class WheelWindow(QWidget):
         if index == self._hover:
             return
         self._hover = index
-        self.update()
+        self._animate_hover()
         petal = self._shapes[index].petal if index is not None else None
         if petal is not None and petal.is_more and petal.enabled and not self._ring_open:
             self._more_timer.start(self.MORE_DELAY_MS)
         else:
             self._more_timer.stop()
+
+    def _animate_hover(self) -> None:
+        """Fade the new hover in and the old one out over HOVER_MS (§8.3)."""
+        if not self._theme.ms(HOVER_MS):
+            self._levels = {} if self._hover is None else {self._hover: 1.0}
+            self._hover_clock.stop()
+            self.update()
+        elif not self._hover_clock.isActive():
+            self._hover_dt.start()
+            self._hover_clock.start()
+
+    def _step_hover(self) -> None:
+        step = self._hover_dt.restart() / HOVER_MS
+        levels: dict[int, float] = {}
+        for i in {*self._levels, *([] if self._hover is None else [self._hover])}:
+            level = self._levels.get(i, 0.0)
+            level = min(1.0, level + step) if i == self._hover else max(0.0, level - step)
+            if level > 0:
+                levels[i] = level
+        self._levels = levels
+        if all(level == 1.0 and i == self._hover for i, level in levels.items()):
+            self._hover_clock.stop()
+        self.update()
 
     def _is_target(self, index: int | None) -> bool:
         """An enabled petal that runs an Op: the only place a drop is accepted (FR-1.8)."""
@@ -257,6 +423,9 @@ class WheelWindow(QWidget):
         _decide(event, self._is_target(index))
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
+        if self._closing.running:  # fading out: no longer a drop target
+            event.ignore()
+            return
         # Windows sends later moves and the drop only to a drop target that accepted the enter,
         # and the wheel opens with the cursor on the hub. So the enter is always accepted, with
         # CopyAction only. Qt follows it at once with a move, which is accepted only over an
@@ -266,12 +435,18 @@ class WheelWindow(QWidget):
         _decide(event, True)
 
     def dragMoveEvent(self, event: QDragMoveEvent) -> None:
+        if self._closing.running:
+            event.ignore()
+            return
         self._track(event)
 
     def dragLeaveEvent(self, _event) -> None:
         self._set_hover(None)
 
     def dropEvent(self, event: QDropEvent) -> None:
+        if self._closing.running:
+            event.ignore()
+            return
         files = _local_files(event.mimeData())
         self._sync(files)
         index = self._hit(event.position())
@@ -282,20 +457,88 @@ class WheelWindow(QWidget):
         QTimer.singleShot(0, self.close)  # a drop anywhere closes the wheel (FR-1.9)
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        """Fade out over CLOSE_MS (§8.5), then close for real and emit ``closed``. While it
+        fades the wheel takes no drops, and a second close waits for the first."""
         self._more_timer.stop()
+        if self._closing.running:
+            event.ignore()
+            return
+        if not self._close_now and self.isVisible() and self._theme.ms(CLOSE_MS):
+            event.ignore()
+            self._closing.start(self._theme.ms(CLOSE_MS))
+            return
+        self._close_now = False
+        for tween in (self._opening, self._swapping, self._ringing):
+            tween.stop()
+        self._hover_clock.stop()
         self._hover = None
+        self._levels.clear()
         self._ring_open = False
         super().closeEvent(event)
         self.closed.emit()
 
+    def _finish_close(self) -> None:
+        self._close_now = True
+        self.close()
+
     # --- painting ---------------------------------------------------------------------------
     def _thumbnail(self, path: Path) -> QPixmap:
         """The shell icon of the first dragged file, cached per extension (§8.3)."""
-        key = (path.suffix.lower(), path.is_dir())
+        key = _icon_key(path)
         if key not in self._thumbs:
             self._icons = self._icons or QFileIconProvider()
             self._thumbs[key] = self._icons.icon(QFileInfo(str(path))).pixmap(80, 80)
         return self._thumbs[key]
+
+    def _load_thumb(self) -> None:
+        if self._thumb_path is not None:
+            self._thumb = self._thumbnail(self._thumb_path)
+            self._thumb_path = None
+            self.update()
+
+    def _warm_up(self) -> None:
+        """Pay one-time costs now rather than on the first wheel (NFR-2, DS-5): the first
+        drawText loads the font database (0.4 s, 3 s on a cold disk), the first shell icon
+        costs ~130 ms (measured in DS-12), and the native window costs its first show."""
+        img = QImage(8, 8, QImage.Format.Format_ARGB32_Premultiplied)
+        p = QPainter(img)
+        p.setFont(self._font)
+        p.drawText(0, 8, "PNG")
+        p.end()
+        self._icons = QFileIconProvider()
+        self._icons.icon(QFileInfo("warm-up.txt"))
+        self.winId()  # creates the native window without showing it
+
+    def _envelope(self) -> tuple[float, float]:
+        """Opacity and scale of the whole wheel for the open and close animations (§8.5)."""
+        opacity, scale = 1.0, 1.0
+        if self._opening.running:
+            t = min(1.0, self._opening.elapsed_ms / OPEN_MS)
+            opacity = t
+            scale = OPEN_SCALE_FROM + (1 - OPEN_SCALE_FROM) * _OUT_BACK.valueForProgress(t)
+        if self._closing.running:
+            opacity *= 1 - _IN_CUBIC.valueForProgress(self._closing.progress)
+        return opacity, scale
+
+    def _petal_alpha(self, i: int) -> float:
+        """Petals fade in one after another, PETAL_STAGGER_MS apart (§8.5)."""
+        if not self._opening.running:
+            return 1.0
+        return max(0.0, min(1.0, (self._opening.elapsed_ms - PETAL_STAGGER_MS * i) / OPEN_MS))
+
+    def _clip_ring(self, p: QPainter) -> None:
+        """The More… ring expands radially from its inner edge (§8.5)."""
+        if self._ringing.running:
+            t = _OUT_CUBIC.valueForProgress(self._ringing.progress)
+            r = geo.RING_IN + (geo.RING_OUT + 1 - geo.RING_IN) * t
+            circle = QPainterPath()
+            circle.addEllipse(QPointF(0, 0), r, r)
+            p.setClipPath(circle, Qt.ClipOperation.IntersectClip)
+
+    @staticmethod
+    def _draw_layer(p: QPainter, layer: QPixmap) -> None:
+        """A glass.SIZE layer centred on the painter origin (the wheel centre)."""
+        p.drawPixmap(QPointF(-glass.SIZE / 2, -glass.SIZE / 2), layer)
 
     def paintEvent(self, _event: QPaintEvent) -> None:
         p = QPainter(self)
@@ -305,34 +548,76 @@ class WheelWindow(QWidget):
             | QPainter.RenderHint.TextAntialiasing
         )
         p.translate(self._centre())
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(_DISC)
-        p.drawEllipse(QPointF(0, 0), geo.R_DISC, geo.R_DISC)
-        p.setFont(self._font)
-        count = len(self._shapes) if self._ring_open else self._n_main
-        for i, shape in enumerate(self._shapes[:count]):
-            self._paint_petal(p, shape, hovered=i == self._hover)
-        self._paint_hub(p)
+        opacity, scale = self._envelope()
+        p.scale(scale, scale)
+        p.setOpacity(opacity)
+        if self._glass is not None:
+            self._draw_layer(p, self._glass.disc)
+            if self._ring_open:
+                p.save()
+                self._clip_ring(p)
+                self._draw_layer(p, self._glass.ring)
+                p.restore()
+        if self._swapping.running and not self._swap_from.isNull():
+            v = self._swapping.progress  # §8.5 swap: cross-fade
+            p.setOpacity(opacity * (1 - v))
+            self._draw_layer(p, self._swap_from)
+            p.setOpacity(opacity * v)
+        self._paint_content(p)
         p.end()
+        if self._thumb_path is not None:
+            QTimer.singleShot(0, self._load_thumb)
 
-    def _paint_petal(self, p: QPainter, shape: _Shape, *, hovered: bool) -> None:
-        petal = shape.petal
+    def _render_content(self) -> QPixmap:
+        """Petals and hub as they are now, as a glass.SIZE layer (for the swap cross-fade)."""
+        dpr = self.devicePixelRatioF()
+        pm = QPixmap(round(glass.SIZE * dpr), round(glass.SIZE * dpr))
+        pm.setDevicePixelRatio(dpr)
+        pm.fill(Qt.GlobalColor.transparent)
+        p = QPainter(pm)
+        p.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.TextAntialiasing)
+        p.translate(glass.SIZE / 2, glass.SIZE / 2)
+        self._paint_content(p)
+        p.end()
+        return pm
+
+    def _paint_content(self, p: QPainter) -> None:
+        """Petals, the open ring's petals and the hub, around the painter origin."""
+        base = p.opacity()
+        p.setFont(self._font)
+        for i, shape in enumerate(self._shapes[: self._n_main]):
+            p.setOpacity(base * self._petal_alpha(i))
+            self._paint_petal(p, shape, self._levels.get(i, 0.0))
+        p.setOpacity(base)
+        if self._ring_open:
+            p.save()
+            self._clip_ring(p)
+            for i in range(self._n_main, len(self._shapes)):
+                self._paint_petal(p, self._shapes[i], self._levels.get(i, 0.0))
+            p.restore()
+        self._paint_hub(p)
+
+    def _paint_petal(self, p: QPainter, shape: _Shape, level: float) -> None:
+        """One petal; ``level`` is its hover transition, 0 (rest) to 1 (hovered) (§8.3)."""
+        petal, t = shape.petal, self._theme
         p.save()
         if not petal.enabled:
-            p.setOpacity(_DISABLED_OPACITY)
-        hovered = hovered and petal.enabled
-        if hovered:  # scale about the wheel centre, which is the painter origin (§8.3)
-            p.scale(geo.HOVER_SCALE, geo.HOVER_SCALE)
-            fill = QColor(_ACCENT)
-            fill.setAlphaF(_HOVER_ALPHA)
-            p.fillPath(shape.path, fill)
+            p.setOpacity(p.opacity() * _DISABLED_OPACITY)
+            level = 0.0
+        if level:  # scale about the wheel centre, which is the painter origin
+            s = 1 + (geo.HOVER_SCALE - 1) * level
+            p.scale(s, s)
+        p.fillPath(shape.path, t.petal)
+        if level:
+            base = p.opacity()
+            p.setOpacity(base * level)
+            p.fillPath(shape.path, t.accent_brush(shape.path.boundingRect(), t.hover.alphaF()))
             sheen = QRadialGradient(shape.anchor + QPointF(-14, -14), 70)
             sheen.setColorAt(0, QColor(255, 255, 255, 90))
             sheen.setColorAt(1, QColor(255, 255, 255, 0))
             p.fillPath(shape.path, sheen)
-        else:
-            p.fillPath(shape.path, _PETAL)
-        p.setPen(QColor("white") if hovered else _TEXT)
+            p.setOpacity(base)
+        p.setPen(_mix(t.text, t.on_accent(), level))
         text = QFontMetrics(self._font).elidedText(
             petal.label.upper(), Qt.TextElideMode.ElideRight, 72
         )
@@ -341,24 +626,25 @@ class WheelWindow(QWidget):
         p.restore()
 
     def _paint_hub(self, p: QPainter) -> None:
-        p.setPen(QPen(_STROKE, 1))
-        p.setBrush(_HUB)
+        t = self._theme
+        p.setPen(QPen(t.stroke, 1))
+        p.setBrush(t.petal)
         p.drawEllipse(QPointF(0, 0), geo.R_HUB, geo.R_HUB)
         if not self._thumb.isNull():
             p.drawPixmap(QRectF(-20, -30, 40, 40), self._thumb, QRectF(self._thumb.rect()))
         if len(self._files) > 1:  # count badge
             badge = QRectF(18, -42, 20, 20)
             p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(_ACCENT)
+            p.setBrush(t.accent_brush(badge))
             p.drawEllipse(badge)
-            p.setPen(QColor("white"))
+            p.setPen(t.on_accent(1.0))
             p.drawText(badge, Qt.AlignmentFlag.AlignCenter, str(len(self._files)))
         text = self.hub_text()
         if not text:
             return
         if self._is_unsupported():
-            p.setPen(_TEXT_2)
-            p.setFont(_label_font(10))
+            p.setPen(t.text_secondary)
+            p.setFont(label_font(10))
             p.drawText(QRectF(-40, 12, 80, 18), Qt.AlignmentFlag.AlignCenter, text)
             p.setFont(self._font)
             return
@@ -366,10 +652,8 @@ class WheelWindow(QWidget):
         text = metrics.elidedText(text.upper(), Qt.TextElideMode.ElideRight, 54)
         pill = QRectF(0, 14, max(48, metrics.horizontalAdvance(text) + 12), 18)
         pill.moveLeft(-pill.width() / 2)
-        pill_fill = QColor(_ACCENT)
-        pill_fill.setAlphaF(0.85)
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(pill_fill)
+        p.setBrush(t.accent_brush(pill, _PILL_ALPHA))
         p.drawRoundedRect(pill, 9, 9)
-        p.setPen(QColor("white"))
+        p.setPen(t.on_accent(_PILL_ALPHA))
         p.drawText(pill, Qt.AlignmentFlag.AlignCenter, text)
