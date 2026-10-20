@@ -15,7 +15,7 @@ from pathlib import Path
 from PySide6.QtCore import QObject, Qt, QTimer, Slot
 from PySide6.QtWidgets import QApplication
 
-from dragshift.config import ConfigStore
+from dragshift.config import Config, ConfigStore
 from dragshift.engine import registry
 from dragshift.engine.jobs import JobManager, JobResult
 from dragshift.gesture import GestureController
@@ -37,12 +37,18 @@ class App(QObject):
         self.wheel = WheelWindow()
         self.gesture = GestureController(self.wheel, self.store.config, parent=self)
         self.hooks = HookThread(self)
+        self.wheel.set_appearance(self.store.config.appearance)
 
         self.hooks.raw_input.connect(self.gesture.on_input, Qt.ConnectionType.QueuedConnection)
         self.hooks.reinstalled.connect(self.gesture.on_hooks_reinstalled)
         self.store.changed.connect(self.gesture.apply_config)
+        self.store.changed.connect(self.on_config_changed)
         self.wheel.dropped.connect(self.on_dropped)
         self.jobs.finished.connect(self.on_finished)
+
+    @Slot(object)
+    def on_config_changed(self, config: Config) -> None:
+        self.wheel.set_appearance(config.appearance)  # theme, accent, reduced motion (§8.2)
 
     @Slot(str, object)
     def on_dropped(self, op_id: str, paths: list[Path]) -> None:
@@ -77,7 +83,8 @@ def run() -> int:
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
     )
-    qt = QApplication(sys.argv)
+    # Qt's GDI font engine: DirectWrite's font database costs ~28 MB private (DS-5, NFR-1).
+    qt = QApplication([*sys.argv, "-platform", "windows:fontengine=gdi"])
     qt.setQuitOnLastWindowClosed(False)  # the wheel is a tool window that comes and goes
     app = build()
     try:
