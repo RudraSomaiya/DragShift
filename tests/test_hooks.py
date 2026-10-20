@@ -6,6 +6,7 @@ session has no interactive desktop (hooks cannot be installed, or input is not r
 """
 
 import ctypes
+import os
 import subprocess
 import sys
 import threading
@@ -53,6 +54,14 @@ class Receiver(QObject):
     @Slot(object)
     def on_input(self, ev: RawInput) -> None:
         self.got.append((ev, threading.get_ident()))
+
+
+class Counter(QObject):
+    hits = 0
+
+    @Slot()
+    def hit(self) -> None:
+        self.hits += 1
 
 
 @pytest.fixture
@@ -271,8 +280,66 @@ INPUT_KEYBOARD = 1
 KEYEVENTF_KEYUP = 0x0002
 
 
+_kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+_advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+_user32.GetForegroundWindow.restype = wintypes.HWND
+_user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+_user32.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+_kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+_kernel32.OpenProcess.restype = wintypes.HANDLE
+_kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+_advapi32.OpenProcessToken.argtypes = [
+    wintypes.HANDLE,
+    wintypes.DWORD,
+    ctypes.POINTER(wintypes.HANDLE),
+]
+_advapi32.GetTokenInformation.argtypes = [
+    wintypes.HANDLE,
+    ctypes.c_int,
+    ctypes.c_void_p,
+    wintypes.DWORD,
+    ctypes.POINTER(wintypes.DWORD),
+]
+PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+TOKEN_QUERY = 0x0008
+TOKEN_ELEVATION = 20  # TOKEN_INFORMATION_CLASS
+
+
+def foreground() -> tuple[str, bool]:
+    """(window class, hidden-from-us?) of the focused window.
+
+    Windows (UIPI) does not show input going to an elevated window to a non-elevated hook, so a
+    window whose process we cannot inspect counts as hidden too.
+    """
+    hwnd = _user32.GetForegroundWindow()
+    if not hwnd:
+        return "<no foreground window>", False
+    cls = ctypes.create_unicode_buffer(128)
+    _user32.GetClassNameW(hwnd, cls, 128)
+    pid = wintypes.DWORD()
+    _user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    proc = _kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid.value)
+    if not proc:
+        return f"{cls.value} (process not inspectable)", True
+    token = wintypes.HANDLE()
+    elevated = wintypes.DWORD(0)
+    try:
+        if _advapi32.OpenProcessToken(proc, TOKEN_QUERY, ctypes.byref(token)):
+            size = wintypes.DWORD()
+            _advapi32.GetTokenInformation(
+                token, TOKEN_ELEVATION, ctypes.byref(elevated), 4, ctypes.byref(size)
+            )
+            _kernel32.CloseHandle(token)
+    finally:
+        _kernel32.CloseHandle(proc)
+    return cls.value, bool(elevated.value)
+
+
 def tap_f24() -> None:
-    """Inject F24 down+up. Skips the test if the session does not register input."""
+    """Inject F24 down+up. Skips the test if hooks could not see it anyway."""
+    name, hidden = foreground()
+    if hidden:
+        pytest.skip(f"foreground window {name} is elevated; Windows hides its input from the hooks")
     before = hooks._last_input_tick()
     inputs = (_INPUT * 2)()
     for i, flags in enumerate((0, KEYEVENTF_KEYUP)):
@@ -297,7 +364,9 @@ def wait_for(condition: object, timeout: float = 3.0) -> bool:
 def live(qapp: object):
     """Real hooks with a fast watchdog. Restores the GIL switch interval afterwards."""
     old_interval = sys.getswitchinterval()
-    thread = HookThread(watchdog_ms=100, stale_ms=100)
+    # stale_ms: GetLastInputInfo runs 50-250 ms ahead of the hooks right after an injected key
+    # (measured here; cause outside the hooks), so 100 ms would re-install healthy hooks.
+    thread = HookThread(watchdog_ms=100, stale_ms=1000)
     try:
         thread.start_hooks()
     except hooks.HookInstallError as exc:
@@ -311,7 +380,7 @@ def test_live_hooks_see_injected_input_and_drop_it(live: HookThread, qtbot: QtBo
     out: list[RawInput] = []
     live.raw_input.connect(out.append)
     tap_f24()
-    assert wait_for(lambda: live.injected_ignored >= 2), "hooks never saw the injected key"
+    assert wait_for(lambda: live.injected_ignored >= 2), f"hooks never saw F24; fg={foreground()}"
     qtbot.wait(100)  # let any (wrongly) emitted signal be delivered
     # Real input from whoever is using the machine is forwarded, so only F24 must be absent.
     assert [e for e in out if e.vk == VK_F24] == []
@@ -334,22 +403,26 @@ def test_start_hooks_lowers_the_gil_switch_interval(live: HookThread) -> None:
 
 
 def test_watchdog_reinstalls_hooks_that_windows_removed(live: HookThread, qtbot: QtBot) -> None:
-    with qtbot.waitSignal(live.reinstalled, timeout=5000):
-        for handle in list(live._hooks):  # what Windows does after a callback timeout
-            hooks.user32.UnhookWindowsHookEx(handle)
-        time.sleep(0.3)  # let the stale window pass
-        tap_f24()  # the system sees input; the dead hooks do not
+    # A QObject receiver, not qtbot.waitSignal: tap_f24() may skip, and a skip inside waitSignal
+    # leaves its blocker connected, so the watchdog's later emit crashes the teardown.
+    counter = Counter()
+    live.reinstalled.connect(counter.hit)
+    for handle in list(live._hooks):  # what Windows does after a callback timeout
+        hooks.user32.UnhookWindowsHookEx(handle)
+    time.sleep(1.2)  # let the stale window pass
+    tap_f24()  # the system sees input; the dead hooks do not
+    qtbot.waitUntil(lambda: counter.hits > 0, timeout=5000)
     assert live.reinstall_count >= 1
     seen = live.injected_ignored
     tap_f24()
-    assert wait_for(lambda: live.injected_ignored >= seen + 2), "re-installed hooks are not live"
+    assert wait_for(lambda: live.injected_ignored >= seen + 2), f"not live; fg={foreground()}"
 
 
 def test_watchdog_leaves_healthy_hooks_alone(live: HookThread) -> None:
     for _ in range(4):
         tap_f24()
         time.sleep(0.2)
-    assert live.reinstall_count == 0
+    assert live.reinstall_count == 0, f"fg={foreground()}"
 
 
 def test_callback_latency_with_a_busy_python_thread_stays_under_1ms(live: HookThread) -> None:
@@ -385,3 +458,45 @@ def test_hooks_module_keeps_the_ui_process_lean() -> None:
     )
     out = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, check=True)
     assert out.stdout.strip() == ""
+
+
+def test_first_event_after_start_hooks_is_not_slow() -> None:
+    """In a fresh process the first cross-thread emit costs ~4 ms unless start_hooks warms it up."""
+    script = """
+import ctypes, threading, time
+from PySide6.QtCore import QCoreApplication, QObject, Slot
+from dragshift.platform import hooks
+
+app = QCoreApplication([])
+ht = hooks.HookThread()
+
+class Rx(QObject):
+    @Slot(object)
+    def on(self, ev):
+        pass
+
+rx = Rx()
+ht.raw_input.connect(rx.on)
+try:
+    ht.start_hooks()
+except hooks.HookInstallError:
+    pass  # the warm-up runs before the hooks are installed, so it still counts
+s = hooks.KBDLLHOOKSTRUCT(0x41, 0, 0, 0, 0)
+out = []
+
+def work():
+    t0 = time.perf_counter_ns()
+    ht._dispatch_key(hooks.WM_KEYDOWN, ctypes.addressof(s), t0)
+    out.append((time.perf_counter_ns() - t0) / 1e3)
+
+t = threading.Thread(target=work)
+t.start()
+t.join()
+ht.stop_hooks()
+print(out[0])
+"""
+    env = {**os.environ, "QT_QPA_PLATFORM": "offscreen"}
+    run = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, check=True, env=env
+    )
+    assert float(run.stdout.strip().splitlines()[-1]) < 1000  # microseconds

@@ -19,7 +19,7 @@ from ctypes import wintypes
 from enum import IntEnum
 from typing import NamedTuple
 
-from PySide6.QtCore import QObject, QThread, Signal
+from PySide6.QtCore import QObject, QThread, Signal, Slot
 
 __all__ = ["HookInstallError", "HookThread", "InputKind", "RawInput", "hook_looks_dead"]
 
@@ -29,7 +29,9 @@ log = logging.getLogger(__name__)
 WH_KEYBOARD_LL = 13
 WH_MOUSE_LL = 14
 HC_ACTION = 0  # nCode: the hook procedure must process the message
+WM_USER = 0x0400
 WM_QUIT = 0x0012
+PM_NOREMOVE = 0x0000
 WM_TIMER = 0x0113
 WM_KEYDOWN = 0x0100
 WM_KEYUP = 0x0101
@@ -133,6 +135,14 @@ user32.GetMessageW.argtypes = [
     wintypes.UINT,
 ]
 user32.GetMessageW.restype = ctypes.c_int  # -1 on error, so not BOOL
+user32.PeekMessageW.argtypes = [
+    ctypes.POINTER(wintypes.MSG),
+    wintypes.HWND,
+    wintypes.UINT,
+    wintypes.UINT,
+    wintypes.UINT,
+]
+user32.PeekMessageW.restype = wintypes.BOOL
 user32.PostThreadMessageW.argtypes = [
     wintypes.DWORD,
     wintypes.UINT,
@@ -176,6 +186,7 @@ class HookThread(QThread):
 
     raw_input = Signal(object)  # RawInput
     reinstalled = Signal()  # hooks were re-installed; events were missed, reset any state
+    _warmup = Signal(object)
 
     def __init__(
         self,
@@ -199,6 +210,7 @@ class HookThread(QThread):
         self.errors = 0  # exceptions swallowed inside callbacks (the hook must keep going)
         self.reinstall_count = 0
         self.max_callback_ns = 0
+        self._warmup.connect(self._on_warmup)
         # Keep references: a garbage-collected CFUNCTYPE callback crashes the process (§9.6).
         self._mouse_proc = HOOKPROC(self._on_mouse)
         self._key_proc = HOOKPROC(self._on_key)
@@ -228,6 +240,10 @@ class HookThread(QThread):
     def is_installed(self) -> bool:
         return bool(self._hooks)
 
+    @Slot(object)
+    def _on_warmup(self, _event: object) -> None:
+        """Receives the warm-up emit from ``run``; does nothing."""
+
     # --- hook callbacks (hook thread). O(1): no COM, no I/O, no logging.
     def _on_mouse(self, n_code: int, w_param: int, l_param: int) -> int:
         if n_code == HC_ACTION:
@@ -251,7 +267,9 @@ class HookThread(QThread):
 
     def _dispatch_mouse(self, w_param: int, l_param: int, t0: int) -> None:
         info = MSLLHOOKSTRUCT.from_address(l_param)
-        self._last_seen_tick = info.time  # for the watchdog; counts injected events too
+        # For the watchdog; counts injected events too. Taken now, in the same clock as
+        # GetLastInputInfo, rather than the event's own time stamp.
+        self._last_seen_tick = kernel32.GetTickCount()
         if info.flags & LLMHF_INJECTED:
             self.injected_ignored += 1
             return
@@ -267,7 +285,7 @@ class HookThread(QThread):
 
     def _dispatch_key(self, w_param: int, l_param: int, t0: int) -> None:
         info = KBDLLHOOKSTRUCT.from_address(l_param)
-        self._last_seen_tick = info.time
+        self._last_seen_tick = kernel32.GetTickCount()
         if info.flags & LLKHF_INJECTED:
             self.injected_ignored += 1
             return
@@ -277,6 +295,12 @@ class HookThread(QThread):
     # --- hook thread: install, message loop, watchdog
     def run(self) -> None:
         self._tid = kernel32.GetCurrentThreadId()
+        # PostThreadMessage (WM_QUIT in stop_hooks) fails until the thread has a message queue,
+        # and PeekMessage is what creates it. Do it before start_hooks() can return.
+        user32.PeekMessageW(ctypes.byref(wintypes.MSG()), None, WM_USER, WM_USER, PM_NOREMOVE)
+        # The first cross-thread emit costs ~4 ms (measured); pay it here, not on the first
+        # real event, which would blow the 1 ms budget.
+        self._warmup.emit(RawInput(InputKind.KEY_UP, 0, 0, 0, 0))
         try:
             self._install()
         except HookInstallError as exc:
