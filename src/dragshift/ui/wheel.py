@@ -20,6 +20,7 @@ from PySide6.QtCore import (
     QRect,
     QRectF,
     QSize,
+    QSizeF,
     Qt,
     QTimer,
     QVariantAnimation,
@@ -40,6 +41,7 @@ from PySide6.QtGui import (
     QPen,
     QPixmap,
     QRadialGradient,
+    QRegion,
 )
 from PySide6.QtWidgets import QFileIconProvider, QWidget
 
@@ -146,6 +148,27 @@ class _Shape:
 
 def _icon_key(path: Path) -> tuple[str, bool]:
     return path.suffix.lower(), path.is_dir()
+
+
+def trimmed(icon: QPixmap) -> QPixmap:
+    """``icon`` without its transparent margin. When an app registers no large icon (Brave's PDF
+    icon, for one), Windows returns its small icon in the top-left corner of a transparent
+    256 px square, which drawn whole is a speck in the corner of the hub."""
+    if icon.isNull() or not icon.hasAlpha():
+        return icon
+    box = QRegion(icon.mask()).boundingRect()  # opaque pixels, in device pixels
+    if box.isEmpty() or box == icon.rect():
+        return icon
+    out = icon.copy(box)
+    out.setDevicePixelRatio(icon.devicePixelRatio())
+    return out
+
+
+def fit(icon: QPixmap, centre: QPointF, side: float) -> QRectF:
+    """Where to draw ``icon``: as large as fits a ``side`` square around ``centre``, keeping its
+    aspect ratio."""
+    size = QSizeF(icon.size()).scaled(side, side, Qt.AspectRatioMode.KeepAspectRatio)
+    return QRectF(centre.x() - size.width() / 2, centre.y() - size.height() / 2, *size.toTuple())
 
 
 def _local_files(mime: QMimeData) -> list[Path]:
@@ -491,7 +514,7 @@ class WheelWindow(QWidget):
         key = _icon_key(path)
         if key not in self._thumbs:
             self._icons = self._icons or QFileIconProvider()
-            self._thumbs[key] = self._icons.icon(QFileInfo(str(path))).pixmap(80, 80)
+            self._thumbs[key] = trimmed(self._icons.icon(QFileInfo(str(path))).pixmap(80, 80))
         return self._thumbs[key]
 
     def _load_thumb(self) -> None:
@@ -635,7 +658,8 @@ class WheelWindow(QWidget):
         p.setBrush(t.petal)
         p.drawEllipse(QPointF(0, 0), geo.R_HUB, geo.R_HUB)
         if not self._thumb.isNull():
-            p.drawPixmap(QRectF(-20, -30, 40, 40), self._thumb, QRectF(self._thumb.rect()))
+            box = fit(self._thumb, QPointF(0, -10), 40)
+            p.drawPixmap(box, self._thumb, QRectF(self._thumb.rect()))
         if len(self._files) > 1:  # count badge
             badge = QRectF(18, -42, 20, 20)
             p.setPen(Qt.PenStyle.NoPen)
