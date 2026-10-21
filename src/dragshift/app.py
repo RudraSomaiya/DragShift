@@ -1,15 +1,20 @@
 """Application wiring (PRD §9.2): HookThread -> GestureController -> WheelWindow -> JobManager.
 
 ``build`` creates the object graph without starting the hooks, so tests can drive it. ``run`` is
-what ``dragshift`` does (FR-6.1: foreground, console logs). Tray, single instance and
-``--background`` come with DS-25 and DS-26.
+what ``dragshift`` does: single instance (FR-6.3), logs to the console when there is one and
+always to a rotating file (FR-6.1, FR-6.5), autostart kept in step with the config (FR-7.2).
+``--background`` is handled in ``__main__`` (FR-6.2). The tray comes with DS-25.
 
 UI-process module: it must never import an engine library (CLAUDE.md rule 2).
 """
 
 import logging
+import os
 import signal
 import sys
+import tempfile
+from collections.abc import Callable
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QPoint, Qt, QTimer, Slot
@@ -21,7 +26,9 @@ from dragshift.engine.jobs import JobManager, JobResult
 from dragshift.gesture import GestureController
 from dragshift.launcher import apps, sites
 from dragshift.launcher.sites import FaviconCache
+from dragshift.platform import autostart
 from dragshift.platform.hooks import HookInstallError, HookThread
+from dragshift.platform.single_instance import SingleInstance
 from dragshift.ui.launcher_wheel import LauncherWheel
 from dragshift.ui.wheel import WheelWindow
 
@@ -33,9 +40,14 @@ log = logging.getLogger(__name__)
 class App(QObject):
     """Owns the long-lived objects and connects them."""
 
-    def __init__(self, store: ConfigStore | None = None) -> None:
+    def __init__(
+        self,
+        store: ConfigStore | None = None,
+        autostart: Callable[[bool], None] | None = None,
+    ) -> None:
         super().__init__()
         self.store = store or ConfigStore()
+        self._autostart = autostart  # writes the Run key; None in tests, which must not
         self.jobs = JobManager(self)
         self.wheel = WheelWindow()
         icons = self.store.path.parent / "icons"  # FR-3.4: %APPDATA%\DragShift\icons
@@ -66,6 +78,16 @@ class App(QObject):
         self.launcher.set_appearance(config.appearance)
         self.launcher.set_launcher(config.launcher)
         self.favicons.ensure(config.launcher.sites)  # once per newly added site (FR-3.4)
+        if self._autostart is not None:
+            try:
+                self._autostart(config.general.autostart)  # FR-7.2
+            except OSError as e:
+                log.warning("could not change autostart: %s", e)
+
+    @Slot()
+    def on_show_settings(self) -> None:
+        """A second launch asked for Settings (FR-6.3). The Settings window comes with DS-25."""
+        log.info("DragShift is already running; Settings comes with DS-25")
 
     @Slot(str, object)
     def on_dropped(self, op_id: str, paths: list[Path]) -> None:
@@ -125,18 +147,45 @@ def _names(paths: list[Path]) -> str:
     return ", ".join(p.name for p in paths)
 
 
-def build(store: ConfigStore | None = None) -> App:
-    return App(store)
+def build(store: ConfigStore | None = None, autostart: Callable[[bool], None] | None = None) -> App:
+    return App(store, autostart)
+
+
+LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+LOG_BYTES, LOG_BACKUPS = 1_000_000, 3  # FR-6.5: 1 MB x 3
+
+
+def log_dir() -> Path:
+    return Path(os.environ.get("LOCALAPPDATA") or tempfile.gettempdir(), "DragShift", "logs")
+
+
+def setup_logging(folder: Path | None = None) -> Path:
+    """Console logs when there is a console (FR-6.1), and always the rotating file (FR-6.5).
+    Under pythonw there is no stderr, and a console handler would fail on every message."""
+    folder = folder or log_dir()
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / "dragshift.log"
+    handlers: list[logging.Handler] = [
+        RotatingFileHandler(path, maxBytes=LOG_BYTES, backupCount=LOG_BACKUPS, encoding="utf-8")
+    ]
+    if sys.stderr is not None:
+        handlers.append(logging.StreamHandler())
+    logging.basicConfig(level=logging.INFO, format=LOG_FORMAT, handlers=handlers, force=True)
+    return path
 
 
 def run() -> int:
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
-    )
+    setup_logging()
+    instance = SingleInstance()
+    if not instance.first:  # FR-6.3: hand over to the running one and leave, before any Qt app
+        instance.notify_first()
+        log.info("DragShift is already running; asked it to open Settings")
+        return 0
     # Qt's GDI font engine: DirectWrite's font database costs ~28 MB private (DS-5, NFR-1).
     qt = QApplication([*sys.argv, "-platform", "windows:fontengine=gdi"])
     qt.setQuitOnLastWindowClosed(False)  # the wheel is a tool window that comes and goes
-    app = build()
+    app = build(autostart=autostart.sync)
+    instance.show_settings.connect(app.on_show_settings)
     try:
         app.hooks.start_hooks()
     except HookInstallError as exc:
@@ -149,4 +198,5 @@ def run() -> int:
     log.info("DragShift is running. Drag a file and tap Shift, Ctrl or Alt. Ctrl+C quits.")
     code = qt.exec()
     app.shutdown()
+    instance.release()
     return code
