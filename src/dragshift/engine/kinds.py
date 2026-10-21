@@ -52,7 +52,8 @@ EXTENSIONS: dict[Kind, frozenset[str]] = {
 _KIND_BY_EXT = {ext: kind for kind, exts in EXTENSIONS.items() for ext in exts}
 
 # Spellings of the same format, so a "JPG" petal is hidden for .jpeg input too.
-_EXT_ALIASES = {"jpeg": "jpg", "tif": "tiff", "heif": "heic", "htm": "html", "aif": "aiff"}
+_EXT_ALIASES = {"jpeg": "jpg", "tif": "tiff", "heif": "heic", "htm": "html", "aif": "aiff",
+                "tgz": "gz"}  # fmt: skip
 
 
 def normalize_ext(ext: str) -> str:
