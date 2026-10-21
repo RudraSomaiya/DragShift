@@ -36,6 +36,23 @@ def free_path(path: Path) -> Path:
     return numbered(path, n)
 
 
+def new_folder(base: Path, ctx: "JobContext") -> Path:
+    """Create the output folder ``base``, or ``base (2)``, … if that exists, so new outputs never
+    mix with old files. ``mkdir`` is atomic, so two jobs never share a folder. A failed or
+    cancelled job removes it again while it is empty."""
+    n = 1
+    while True:
+        # Not numbered(): a folder name has no extension ("v1.2 report pages").
+        folder = base if n < 2 else base.with_name(f"{base.name} ({n})")
+        try:
+            folder.mkdir()
+        except FileExistsError:
+            n += 1
+            continue
+        ctx.made_dirs.append(folder)
+        return folder
+
+
 def final_path(part: Path) -> Path:
     return part.with_name(part.name.removesuffix(PART))
 
