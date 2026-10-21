@@ -44,7 +44,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import QFileIconProvider, QWidget
 
 from dragshift.config import Appearance
-from dragshift.engine.registry import Wheel, ops_for
+from dragshift.engine.registry import Wheel, children_for, ops_for
 from dragshift.platform import screen
 from dragshift.ui import glass
 from dragshift.ui import wheel_geometry as geo
@@ -188,9 +188,10 @@ class WheelWindow(QWidget):
         self._usage: Mapping[str, Mapping[str, int]] = {}
         self._layout = WheelLayout()
         self._shapes: list[_Shape] = []
-        self._n_main = 0  # the first _n_main shapes are the wheel, the rest the More… ring
+        self._n_main = 0  # the first _n_main shapes are the wheel, the rest the open ring
         self._hover: int | None = None
-        self._ring_open = False
+        self._ring_of: int | None = None  # the petal whose ring is open: More… or an Op's
+        self._ring_clip: QPainterPath | None = None  # the glass under an Op's ring
         self._centre_global = QPoint()  # the wheel centre in screen coordinates
         self._icons: QFileIconProvider | None = None
         self._thumbs: dict[tuple[str, bool], QPixmap] = {}
@@ -268,7 +269,7 @@ class WheelWindow(QWidget):
 
     @property
     def ring_open(self) -> bool:
-        return self._ring_open
+        return self._ring_of is not None
 
     @property
     def animating(self) -> bool:
@@ -302,17 +303,18 @@ class WheelWindow(QWidget):
         ops = ops_for(self._files, self._wheel) if self._files else []
         key = input_kind(self._files)
         ops = order_ops(ops, self._pinned.get(key, ()), self._usage.get(key, {}))
-        return build_layout(ops, enabled=not self._unsupported)
+        children = {o.id: children_for(o, self._files) for o in ops if o.children}
+        return build_layout(ops, enabled=not self._unsupported, children=children)
 
     def _relayout(self) -> None:
         """Rebuild the petals for the current wheel and files. Resets hover and the ring."""
         self._layout = self._build_layout()
 
-        main, ring = self._layout.petals, self._layout.ring
+        main = self._layout.petals
         self._n_main = len(main)
         self._shapes = self._shapes_for(main, geo.R_IN, geo.R_OUT)
-        self._shapes += self._shapes_for(ring, geo.RING_IN, geo.RING_OUT)
-        self._ring_open = False
+        self._ring_of = None
+        self._ring_clip = None
         self._ringing.stop()
         self._levels.clear()
         self._set_hover(None)
@@ -334,7 +336,8 @@ class WheelWindow(QWidget):
         inside the monitor's work area (FR-1.3)."""
         screen = QGuiApplication.screenAt(at) or QGuiApplication.primaryScreen()
         area = screen.availableGeometry()
-        half = (geo.RING_WIN if self._layout.ring else geo.WIN) // 2
+        rings = self._layout.ring or any(p.ring for p in self._layout.petals)
+        half = (geo.RING_WIN if rings else geo.WIN) // 2
         x = max(area.left() + half, min(at.x(), area.right() + 1 - half))
         y = max(area.top() + half, min(at.y(), area.bottom() + 1 - half))
         self._centre_global = QPoint(x, y)
@@ -349,12 +352,39 @@ class WheelWindow(QWidget):
     def _centre(self) -> QPointF:
         return QPointF(self.width() / 2, self.height() / 2)
 
+    def _ring_petals(self, index: int) -> tuple[Petal, ...]:
+        """What the main petal ``index`` opens on hover: the More… ring or its Op's children."""
+        petal = self._shapes[index].petal
+        return self._layout.ring if petal.is_more else petal.ring
+
     def _open_ring(self) -> None:
-        if self._layout.ring and not self._ring_open:
-            self._ring_open = True
-            self._apply_size(geo.RING_WIN)
-            self._ringing.start(self._theme.ms(RING_MS))
-            self.update()
+        """Open the hovered petal's ring, in place of any other open one. More…'s ring goes
+        all the way round; an Op's ring fans out beside its petal."""
+        index = self._hover
+        if index is None or index >= self._n_main or index == self._ring_of:
+            return
+        ring = self._ring_petals(index)
+        if not ring:
+            return
+        if self._shapes[index].petal.is_more:
+            shapes = self._shapes_for(ring, geo.RING_IN, geo.RING_OUT)
+            self._ring_clip = None
+        else:
+            _, mid, _ = geo.sector_angles(self._n_main)[index]
+            r = (geo.RING_IN + geo.RING_OUT) / 2
+            shapes = [
+                _Shape(petal, geo.sector_path(a0, a1, geo.RING_IN, geo.RING_OUT), geo.polar(m, r))
+                for petal, (a0, m, a1) in zip(ring, geo.fan_angles(mid, len(ring)), strict=True)
+            ]
+            self._ring_clip = QPainterPath()
+            for shape in shapes:
+                self._ring_clip = self._ring_clip.united(shape.path)
+        self._shapes = self._shapes[: self._n_main] + shapes
+        self._levels = {i: v for i, v in self._levels.items() if i < self._n_main}
+        self._ring_of = index
+        self._apply_size(geo.RING_WIN)
+        self._ringing.start(self._theme.ms(RING_MS))
+        self.update()
 
     def _render_glass(self) -> glass.Glass:
         """§8.4: snapshot the desktop under the wheel (and its ring) and render the glass."""
@@ -367,7 +397,7 @@ class WheelWindow(QWidget):
 
     # --- hover and hit-testing --------------------------------------------------------------
     def _hit(self, pos: QPointF) -> int | None:
-        active = self._shapes if self._ring_open else self._shapes[: self._n_main]
+        active = self._shapes if self.ring_open else self._shapes[: self._n_main]
         return geo.hit_test([s.path for s in active], pos - self._centre())
 
     def _set_hover(self, index: int | None) -> None:
@@ -375,8 +405,14 @@ class WheelWindow(QWidget):
             return
         self._hover = index
         self._animate_hover()
-        petal = self._shapes[index].petal if index is not None else None
-        if petal is not None and petal.is_more and petal.enabled and not self._ring_open:
+        opens = (
+            index is not None
+            and index < self._n_main
+            and index != self._ring_of
+            and self._shapes[index].petal.enabled
+            and bool(self._ring_petals(index))
+        )
+        if opens:
             self._more_timer.start(self.MORE_DELAY_MS)
         else:
             self._more_timer.stop()
@@ -409,7 +445,7 @@ class WheelWindow(QWidget):
         if index is None:
             return False
         petal = self._shapes[index].petal
-        return petal.enabled and not petal.is_more
+        return petal.enabled and not petal.is_more and not petal.ring
 
     # --- drag and drop (FR-1.5, FR-1.8-FR-1.10) ---------------------------------------------
     def _sync(self, files: list[Path]) -> None:
@@ -477,7 +513,7 @@ class WheelWindow(QWidget):
         self._hover_clock.stop()
         self._hover = None
         self._levels.clear()
-        self._ring_open = False
+        self._ring_of = None
         super().closeEvent(event)
         self.closed.emit()
 
@@ -557,9 +593,11 @@ class WheelWindow(QWidget):
         p.setOpacity(opacity)
         if self._glass is not None:
             self._draw_layer(p, self._glass.disc)
-            if self._ring_open:
+            if self.ring_open:
                 p.save()
                 self._clip_ring(p)
+                if self._ring_clip is not None:
+                    p.setClipPath(self._ring_clip, Qt.ClipOperation.IntersectClip)
                 self._draw_layer(p, self._glass.ring)
                 p.restore()
         if self._swapping.running and not self._swap_from.isNull():
@@ -593,7 +631,7 @@ class WheelWindow(QWidget):
             p.setOpacity(base * self._petal_alpha(i))
             self._paint_petal(p, shape, self._levels.get(i, 0.0))
         p.setOpacity(base)
-        if self._ring_open:
+        if self.ring_open:
             p.save()
             self._clip_ring(p)
             for i in range(self._n_main, len(self._shapes)):

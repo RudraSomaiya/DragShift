@@ -17,7 +17,8 @@ RING_WIN = 460  # window while the More… ring is open
 R_DISC = 150  # 300 px disc
 R_HUB = 48  # 96 px hub
 R_IN, R_OUT = 58, 142  # petal annulus
-RING_IN, RING_OUT = 150, 210  # More… ring annulus
+RING_IN, RING_OUT = 150, 210  # More… ring annulus, and the outer ring of an Op's children
+FAN_STEP = math.radians(40)  # the width of each petal in an Op's outer ring
 GAP = 6  # between neighbouring petals
 CORNER = 18  # petal corner rounding
 HOVER_SCALE = 1.04
@@ -29,6 +30,13 @@ def sector_angles(n: int) -> list[tuple[float, float, float]]:
         return []
     step = 2 * math.pi / n
     return [(m - step / 2, m, m + step / 2) for m in (-math.pi / 2 + i * step for i in range(n))]
+
+
+def fan_angles(mid: float, n: int, step: float = FAN_STEP) -> list[tuple[float, float, float]]:
+    """(start, mid, end) of ``n`` sectors ``step`` wide, clockwise and centred on ``mid``: an
+    Op's outer ring, fanned out beside its petal."""
+    first = mid - step * (n - 1) / 2
+    return [(m - step / 2, m, m + step / 2) for m in (first + i * step for i in range(n))]
 
 
 def polar(angle: float, radius: float) -> QPointF:

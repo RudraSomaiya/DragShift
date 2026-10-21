@@ -1,4 +1,5 @@
-"""What a wheel shows: Op ordering (FR-2.2) and the 8-petal / More… split (FR-2.1)."""
+"""What a wheel shows: Op ordering (FR-2.2), the 8-petal / More… split (FR-2.1), and the outer
+rings of Ops with children (Copy to ▸, Compress ▸)."""
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -26,6 +27,7 @@ class Petal:
     op_id: str | None  # None marks the More… petal
     label: str
     enabled: bool = True
+    ring: tuple["Petal", ...] = ()  # an Op's children, shown in an outer ring on hover
 
     @property
     def is_more(self) -> bool:
@@ -53,11 +55,19 @@ def order_ops(
     )
 
 
-def build_layout(ops: Sequence[Op], *, enabled: bool = True) -> WheelLayout:
-    """Up to 8 petals. With more Ops, 7 plus More… and a ring of up to 16 (FR-2.1)."""
+def build_layout(
+    ops: Sequence[Op],
+    *,
+    enabled: bool = True,
+    children: Mapping[str, Sequence[Op]] | None = None,
+) -> WheelLayout:
+    """Up to 8 petals. With more Ops, 7 plus More… and a ring of up to 16 (FR-2.1).
+    ``children`` holds, per Op id, the Ops of that petal's own outer ring."""
+    children = children or {}
 
     def petal(o: Op) -> Petal:
-        return Petal(o.id, o.label, enabled)
+        ring = tuple(Petal(c.id, c.label, enabled) for c in children.get(o.id, ()))
+        return Petal(o.id, o.label, enabled, ring)
 
     if len(ops) <= MAX_PETALS:
         return WheelLayout(tuple(map(petal, ops)))

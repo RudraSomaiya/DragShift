@@ -34,8 +34,8 @@ class Op:
     hide_if_same_ext: str | None = None  # hide the "PNG" petal for .png input
 
 
-# Packages whose modules declare Ops. Add tools/actions here when those packages exist.
-_OP_PACKAGES = ("dragshift.engine.converters",)
+# Packages whose modules declare Ops. Add tools here when that package exists.
+_OP_PACKAGES = ("dragshift.engine.converters", "dragshift.engine.actions")
 
 _OPS: dict[str, Op] = {}  # insertion order = default petal order (PRD §6)
 _loaded = False
@@ -98,8 +98,33 @@ def accepts(op: Op, paths: Sequence[Path]) -> bool:
     return _fits(op, _infos(paths))
 
 
+def _valid(op: Op, infos: list[_Info]) -> bool:
+    return _fits(op, infos) and op.available()
+
+
+def _children(op: Op, infos: list[_Info]) -> list[Op]:
+    return [_OPS[c] for c in op.children if c in _OPS and _valid(_OPS[c], infos)]
+
+
 def ops_for(paths: Sequence[Path], wheel: Wheel) -> list[Op]:
-    """Ops on ``wheel`` valid for every path (FR-1.11), available (FR-2.4), in default order."""
+    """Ops on ``wheel`` valid for every path (FR-1.11), available (FR-2.4), in default order.
+
+    An Op listed in another's ``children`` shows only in that Op's outer ring, so it is left
+    out here; an Op with children but none valid for these paths is left out too."""
     _ensure_loaded()
     infos = _infos(paths)
-    return [o for o in _OPS.values() if o.wheel == wheel and _fits(o, infos) and o.available()]
+    nested = {c for o in _OPS.values() for c in o.children}
+    return [
+        o
+        for o in _OPS.values()
+        if o.wheel == wheel
+        and o.id not in nested
+        and _valid(o, infos)
+        and (not o.children or _children(o, infos))
+    ]
+
+
+def children_for(op: Op, paths: Sequence[Path]) -> list[Op]:
+    """``op``'s children valid for every path and available: its outer ring, in order."""
+    _ensure_loaded()
+    return _children(op, _infos(paths))

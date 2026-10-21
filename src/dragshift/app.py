@@ -20,10 +20,12 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QPoint, Qt, QTimer, Slot
+from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QApplication
 
 from dragshift.config import Config, ConfigStore
 from dragshift.engine import registry
+from dragshift.engine.actions import files as actions
 from dragshift.engine.jobs import JobManager, JobResult
 from dragshift.gesture import GestureController
 from dragshift.history import History
@@ -89,6 +91,7 @@ class App(QObject):
         self.wheel.set_appearance(config.appearance)  # theme, accent, reduced motion (§8.2)
         self.launcher.set_appearance(config.appearance)
         self.toasts.stack.set_appearance(config.appearance)
+        actions.pin_folders(config.folders.pinned)  # the Copy to / Move to rings (§6.3)
         self.apply_ordering()
         self.launcher.set_launcher(config.launcher)
         self.favicons.ensure(config.launcher.sites)  # once per newly added site (FR-3.4)
@@ -112,9 +115,9 @@ class App(QObject):
         # Settings > Output > JPEG/WebP quality and PDF raster DPI (FR-8.1), read at drop time so
         # they apply live.
         output = self.store.config.output
-        job_id = self.jobs.submit(
-            op_id, list(paths), {"quality": output.jpeg_quality, "dpi": output.pdf_dpi}
-        )
+        params = {"quality": output.jpeg_quality, "dpi": output.pdf_dpi}
+        params |= actions.params_for(op_id)  # a Copy to / Move to ring: its folder
+        job_id = self.jobs.submit(op_id, list(paths), params)
         self.toasts.started(job_id, op_id, list(paths))  # a progress toast after 1 s (FR-4.5)
 
     @Slot(str, QPoint)
@@ -150,6 +153,8 @@ class App(QObject):
 
     @Slot(str, object)
     def on_finished(self, job_id: str, result: JobResult) -> None:
+        if result.copied:  # Copy path, Copy name, SHA-256: a worker owns no clipboard
+            QGuiApplication.clipboard().setText(result.copied)
         if result.ok:
             log.info("%s: %s -> %s", result.op_id, _names(result.inputs), _names(result.outputs))
         else:

@@ -84,8 +84,9 @@ def result_content(result: JobResult) -> ToastContent:
         reason = result.message.splitlines()[0] if result.message else "Something went wrong"
         return ToastContent(title, reason, ("Details",), kind="error")
     main = primary_output(result)
-    if main is None:  # an op with no file output, e.g. Copy path
-        return ToastContent(label, result.message or "Done")
+    if main is None:  # an op with no file output, e.g. Copy path: what it copied
+        copied = result.copied.splitlines()[0] if result.copied else ""
+        return ToastContent(label, result.message or copied or "Done")
     parts = [f"Converted to {label}" if to_format else label]
     if len(result.outputs) > 1:
         parts.append(f"{len(result.outputs)} files")
@@ -149,6 +150,9 @@ class JobToasts(QObject):
         self._running.pop(job_id, None)
         if result.cancelled:
             self.stack.dismiss(job_id)
+            return
+        if result.ok and not (result.outputs or result.message or result.copied):
+            self.stack.dismiss(job_id)  # nothing to tell: the terminal it opened says it all
             return
         self._results[job_id] = result
         if not result.ok:

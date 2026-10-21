@@ -425,3 +425,62 @@ def test_ui_sources_never_accept_the_proposed_action() -> None:
     ui = Path(wheel_module.__file__).parent
     offenders = [p.name for p in ui.rglob("*.py") if "acceptProposedAction" in p.read_text("utf-8")]
     assert offenders == []
+
+
+# --- an Op's own ring (Copy to ▸) ----------------------------------------------------------
+@pytest.fixture
+def pinned() -> Any:
+    from dragshift.engine.actions import files as actions
+
+    actions.pin_folders(["C:/Work/Projects", "D:/"])
+    yield
+    actions.pin_folders(())
+
+
+def fan_pos(w: WheelWindow, owner: int, i: int) -> QPointF:
+    _, mid, _ = geo.sector_angles(len(w.layout.petals))[owner]
+    n = len(w.layout.petals[owner].ring)
+    return centre(w) + geo.polar(geo.fan_angles(mid, n)[i][1], 180)
+
+
+def test_copy_to_opens_a_ring_of_pinned_folders_and_only_they_take_drops(
+    wheel: WheelWindow, pinned: None, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(WheelWindow, "MORE_DELAY_MS", 30)
+    wheel.open("actions", AT, [PNG])
+    labels = [p.label for p in wheel.layout.petals]
+    owner = labels.index("Copy to ▸")
+    assert [p.label for p in wheel.layout.petals[owner].ring] == ["Projects", "D:"]
+    mime = mime_of(PNG)
+    begin(wheel, mime)
+    assert not send(wheel, "move", petal_pos(wheel, owner), mime).isAccepted()  # no drop here
+    qtbot.waitUntil(lambda: wheel.ring_open, timeout=2000)
+    assert wheel.size().width() == geo.RING_WIN
+    target = fan_pos(wheel, owner, 1)
+    assert is_copy_accepted(send(wheel, "move", target, mime))
+    assert wheel.hub_text() == "D:"
+    dropped = recorder(wheel.dropped)
+    with qtbot.waitSignal(wheel.closed, timeout=2000):
+        assert is_copy_accepted(send(wheel, "drop", target, mime))
+    assert dropped == [("actions.copy_to.2", [PNG.resolve()])]
+
+
+def test_hovering_another_op_with_a_ring_swaps_the_ring(
+    wheel: WheelWindow, pinned: None, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(WheelWindow, "MORE_DELAY_MS", 30)
+    wheel.open("actions", AT, [PNG])
+    labels = [p.label for p in wheel.layout.petals]
+    copy, move = labels.index("Copy to ▸"), labels.index("Move to ▸")
+    mime = mime_of(PNG)
+    begin(wheel, mime)
+    send(wheel, "move", petal_pos(wheel, copy), mime)
+    qtbot.waitUntil(lambda: wheel.ring_open, timeout=2000)
+    send(wheel, "move", petal_pos(wheel, move), mime)
+    qtbot.waitUntil(lambda: wheel._ring_of == move, timeout=2000)
+    target = fan_pos(wheel, move, 0)
+    assert is_copy_accepted(send(wheel, "move", target, mime))
+    assert wheel.hub_text() == "Projects"
+    dropped = recorder(wheel.dropped)
+    send(wheel, "drop", target, mime)
+    assert dropped[0][0] == "actions.move_to.1"

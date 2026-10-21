@@ -117,6 +117,8 @@ def run_op(found: Op, files: list[Path], params: dict) -> int:
     (result,) = results
     for path in result.outputs:
         print(path)
+    if result.copied:  # SHA-256: the wheel copies it; here it is printed
+        print(result.copied)
     if not result.ok:
         _err(result.message)
         return FAILED

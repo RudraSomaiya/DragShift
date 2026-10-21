@@ -286,3 +286,19 @@ def test_an_error_outside_a_job(rig: tuple) -> None:
         "error",
         ("Details",),
     )
+
+
+def test_a_copy_shows_what_was_copied() -> None:
+    copied = JobResult("actions.sha256", [], [], True, "", {}, copied="ab12  a.png\ncd34  b.png")
+    c = result_content(copied)
+    assert (c.title, c.subtitle, c.buttons) == ("SHA-256", "ab12  a.png", ())
+
+
+def test_a_job_with_nothing_to_report_gets_no_toast(
+    qtbot: QtBot, rig: tuple, tmp_path: Path
+) -> None:
+    toasts, *_ = rig
+    toasts.started("j", "actions.terminal", [tmp_path])
+    toasts.finished("j", JobResult("actions.terminal", [tmp_path], [], True, "", {}))
+    qtbot.wait(60)  # past PROGRESS_AFTER_MS
+    assert toasts.stack.get("j") is None
