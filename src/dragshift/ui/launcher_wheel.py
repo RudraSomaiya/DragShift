@@ -29,7 +29,7 @@ from dragshift.platform.hooks import InputKind, RawInput
 from dragshift.platform.shell_icon import shell_icon
 from dragshift.ui import wheel_geometry as geo
 from dragshift.ui.theme import label_font
-from dragshift.ui.wheel import WheelWindow, _Shape
+from dragshift.ui.wheel import WheelWindow, _Shape, fit, trimmed
 from dragshift.ui.wheel_model import Petal, WheelLayout
 
 SLOTS = 8  # FR-3.3, FR-3.4
@@ -84,7 +84,7 @@ def _app_icon(target: str) -> QPixmap | None:
         pm.setDevicePixelRatio(w / ICON)
         return pm
     if aumid is None:  # the shell said no: Qt's own file icon
-        return QFileIconProvider().icon(QFileInfo(name)).pixmap(ICON, ICON)
+        return trimmed(QFileIconProvider().icon(QFileInfo(name)).pixmap(ICON, ICON))
     return None
 
 
@@ -251,11 +251,7 @@ class LauncherWheel(WheelWindow):
             s = 1 + (geo.HOVER_SCALE - 1) * level
             p.scale(s, s)
         centre = shape.anchor - QPointF(0, _LABEL_DROP + _ICON_RISE)
-        p.drawPixmap(
-            QRectF(centre.x() - ICON / 2, centre.y() - ICON / 2, ICON, ICON),
-            icon,
-            QRectF(icon.rect()),
-        )
+        p.drawPixmap(fit(icon, centre, ICON), icon, QRectF(icon.rect()))
         p.restore()
 
     def _paint_hub(self, p: QPainter) -> None:

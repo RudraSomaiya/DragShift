@@ -425,3 +425,26 @@ def test_ui_sources_never_accept_the_proposed_action() -> None:
     ui = Path(wheel_module.__file__).parent
     offenders = [p.name for p in ui.rglob("*.py") if "acceptProposedAction" in p.read_text("utf-8")]
     assert offenders == []
+
+
+def test_a_small_icon_padded_into_a_jumbo_one_is_trimmed(qapp: QApplication) -> None:
+    """Windows pads an app's 48 px icon into the corner of a 256 px square (Brave's PDF icon)."""
+    from PySide6.QtGui import QColor, QPainter, QPixmap
+
+    padded = QPixmap(256, 256)
+    padded.fill(Qt.GlobalColor.transparent)
+    p = QPainter(padded)
+    p.fillRect(2, 1, 48, 60, QColor("red"))
+    p.end()
+    assert wheel_module.trimmed(padded).size().toTuple() == (48, 60)
+    full = QPixmap(64, 64)
+    full.fill(QColor("red"))
+    assert wheel_module.trimmed(full).size().toTuple() == (64, 64)
+
+
+def test_icons_are_fitted_without_stretching() -> None:
+    from PySide6.QtGui import QPixmap
+
+    box = wheel_module.fit(QPixmap(48, 60), QPointF(0, -10), 40)
+    assert box.size().toTuple() == (32, 40)
+    assert box.center() == QPointF(0, -10)
