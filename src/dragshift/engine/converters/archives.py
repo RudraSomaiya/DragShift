@@ -168,7 +168,7 @@ def extract_here(src: Path, ctx: "JobContext") -> Path | None:
 
 
 # --- packing ---------------------------------------------------------------------------------
-def _files_under(root: Path) -> list[Path]:
+def files_under(root: Path) -> list[Path]:
     """Every file and empty folder below ``root``, in a stable order, without following links."""
     found = []
     for folder, dirs, files in os.walk(root, followlinks=False):
@@ -211,7 +211,7 @@ def _repack(paths: list[Path], ctx: "JobContext", ext: str, label_text: str) -> 
                 root = Path(tmp)
                 extract(src, root, ctx)
                 if ext == "zip":
-                    write_zip(_files_under(root), root, dst, ctx, label_text)
+                    write_zip(files_under(root), root, dst, ctx, label_text)
                 else:
                     write_targz(root, dst, ctx, label_text)
         except Cancelled:
@@ -256,7 +256,7 @@ def folder_to_zip(paths: list[Path], params: dict, ctx: "JobContext") -> list[Pa
     for folder in paths:
         dst = ctx.output_path(folder, ext="zip")
         try:
-            items = _files_under(folder) or [folder]  # an empty folder is still in the zip
+            items = files_under(folder) or [folder]  # an empty folder is still in the zip
             write_zip(items, folder.parent, dst, ctx, folder.name)
         except Cancelled:
             return []

@@ -219,3 +219,29 @@ def test_taps_with_a_launcher_open_swap_or_close_it(
     the_app.on_quick_launch("sites", QPoint())  # the other key: swap in place
     the_app.on_quick_launch("apps", QPoint())  # the open wheel's own key: close
     assert calls == [("open", "apps"), ("swap", "sites"), ("close",)]
+
+
+def test_pinned_folders_reach_the_rings_and_the_jobs(
+    the_app: App, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from dragshift.engine.actions import files as actions
+
+    folders = dataclasses.replace(the_app.store.config.folders, pinned=(str(tmp_path),))
+    the_app.store.update(dataclasses.replace(the_app.store.config, folders=folders))
+    try:
+        ring = registry.children_for(registry.get("actions.move_to"), [Path("C:/x/a.png")])
+        assert [o.label for o in ring] == [tmp_path.name]
+        submitted: list[tuple] = []
+        monkeypatch.setattr(the_app.jobs, "submit", lambda *a, **k: submitted.append(a) or "id")
+        the_app.wheel.dropped.emit("actions.move_to.1", [Path("C:/x/a.png")])
+        assert submitted[0][2]["folder"] == str(tmp_path)
+    finally:
+        actions.pin_folders(())
+
+
+def test_copied_text_goes_on_the_clipboard(the_app: App) -> None:
+    from PySide6.QtGui import QGuiApplication
+
+    result = JobResult("actions.copy_name", [Path("C:/x/a.png")], [], True, "", {}, copied="a.png")
+    the_app.jobs.finished.emit("job-1", result)
+    assert QGuiApplication.clipboard().text() == "a.png"

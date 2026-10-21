@@ -10,6 +10,7 @@
 - Undo (FR-5.6) is ``apply_undo`` on a ``JobResult.undo``; ``History.undo`` is its caller, so a
   job is undone once and from the toast and History alike. It sends outputs to the Recycle Bin
   from the UI process: ``send2trash`` is a thin shell API wrapper, imported only when needed.
+  Move to is undone by moving the files back.
 """
 
 import multiprocessing
@@ -29,12 +30,12 @@ from PySide6.QtCore import QObject, QTimer, Signal
 from dragshift.engine import registry
 from dragshift.engine.worker import (
     CANCELLED,
-    PART,
     CancelDir,
     JobContext,
     final_path,
-    free_path,
+    finalize,
     init_worker,
+    move_path,
     run_job,
 )
 
@@ -62,15 +63,34 @@ def stamp(path: Path) -> list[int]:
     return [st.st_size, st.st_mtime_ns]
 
 
+def _move_back(undo: dict) -> list[Path]:
+    """Undo Move to: each moved item goes back where it was. One that changed since the move,
+    or whose old place is taken again, stays where it is: those are returned."""
+    moves = [(Path(a), Path(b)) for a, b in undo.get("moves", ())]
+    stamps = undo.get("stamps") or [None] * len(moves)
+    kept: list[Path] = []
+    for (origin, moved), known in zip(moves, stamps, strict=True):
+        if not moved.exists():
+            continue
+        if origin.exists() or (known is not None and stamp(moved) != list(known)):
+            kept.append(moved)
+            continue
+        move_path(moved, origin)
+    return kept
+
+
 def apply_undo(undo: dict) -> list[Path]:
     """Reverse a job from its ``JobResult.undo`` (FR-5.6). ``"trash"`` sends the outputs that
     still exist to the Recycle Bin, then removes the output folders the job made once they are
     empty. An output whose size or modification time changed since the job (``stamps``) is not
-    the file the job wrote any more, so it is kept: those are returned.
+    the file the job wrote any more, so it is kept: those are returned. ``"move"`` moves the
+    items of a Move to job back.
 
     Raises ``ValueError`` for an undo type it does not know and ``OSError`` if the Recycle Bin
     refuses."""
     kind = undo.get("type")
+    if kind == "move":
+        return _move_back(undo)
     if kind != "trash":
         raise ValueError(f"cannot undo {kind!r}")
     paths = [Path(p) for p in undo.get("paths", ())]
@@ -100,6 +120,7 @@ class JobResult:
     message: str  # the failure, or a note on a successful job (it went to Downloads, FR-5.3)
     undo: dict
     cancelled: bool = False  # cancelled by the user or on quit: no toast, no history
+    copied: str = ""  # text the job put on the clipboard (Copy path, SHA-256)
 
 
 @dataclass
@@ -292,9 +313,13 @@ class JobManager(QObject):
         # Partial results are kept (FR-4.2): finalize every output the worker produced.
         outputs: list[Path] = []
         messages = [raw["message"]] if raw["message"] else []
+        final = raw.get("final", ())
         for part in raw["outputs"]:
+            if part in final:  # renamed by the op itself (Copy to, Move to)
+                outputs.append(part)
+                continue
             try:
-                outputs.append(self._finalize(part))
+                outputs.append(finalize(part))
             except OSError as e:
                 Path(part).unlink(missing_ok=True)
                 messages.append(f"Could not save {final_path(Path(part)).name}: {e}")
@@ -302,7 +327,13 @@ class JobManager(QObject):
         if raw.get("redirected") and outputs:
             messages.append(REDIRECTED)  # a note on a successful job too, for its toast
         undo: dict = {}
-        if outputs:
+        if raw.get("moves"):  # Move to: Undo moves them back (FR-5.6)
+            undo = {"type": "move", "moves": raw["moves"]}
+            try:
+                undo["stamps"] = [stamp(Path(moved)) for _, moved in raw["moves"]]
+            except OSError:
+                pass
+        elif outputs:
             undo = {"type": "trash", "paths": outputs}
             try:  # so Undo can tell these files from ones saved later under the same names
                 undo["stamps"] = [stamp(o) for o in outputs]
@@ -310,17 +341,6 @@ class JobManager(QObject):
                 pass  # without stamps Undo trashes whatever is there, as before
             if raw.get("dirs"):
                 undo["dirs"] = list(raw["dirs"])
-        return JobResult(job.op_id, job.inputs, outputs, ok, "; ".join(messages), undo)
-
-    @staticmethod
-    def _finalize(part: Path) -> Path:
-        """Rename ``x.jpg.part`` → ``x.jpg``, never over an existing file (FR-5.2, NFR-4)."""
-        if part.suffix != PART:
-            return part
-        while True:
-            target = free_path(final_path(part))
-            try:
-                part.rename(target)  # on Windows rename fails rather than replace
-                return target
-            except FileExistsError:
-                continue  # someone created it in between; pick the next free name
+        message = "; ".join(messages)
+        copied = raw.get("copied", "")
+        return JobResult(job.op_id, job.inputs, outputs, ok, message, undo, copied=copied)

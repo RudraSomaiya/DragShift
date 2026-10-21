@@ -223,9 +223,9 @@ A target equal to the source format is hidden (e.g. no "PNG" petal for a PNG).
 |---|---|---|
 | Copy path | Copies the full path(s) to the clipboard, newline-separated | UI |
 | Copy name | Copies the file name(s) | UI |
-| Open terminal here | `wt.exe -d "<folder>"` if available, else `powershell.exe` with `-WorkingDirectory` | UI |
-| Copy to ▸ / Move to ▸ | Pinned folders (1–4, set in Settings); the ring shows the folder names | Worker |
-| Zip | `<first stem>.zip` or `Archive.zip` | Worker |
+| Open terminal here (petal: Terminal) | `wt.exe -d "<folder>"` if available, else `powershell.exe` started in the folder (Windows PowerShell 5.1 has no `-WorkingDirectory`). A dragged folder opens in itself, a file in its folder | UI |
+| Copy to ▸ / Move to ▸ | Pinned folders (1–4, set in Settings); the ring shows the folder names. A name already taken gets ` (2)` (FR-5.2). Neither goes to Downloads (FR-5.3): the user chose the folder. A move across drives copies, then deletes the original once the copy is complete. Undo removes the copy or moves the item back (FR-5.6) | Worker |
+| Zip | `<stem>.zip` for one item, `Archive.zip` for several, next to the first | Worker |
 | Copy SHA-256 | Hash of the file(s), copied as `hash  name` lines | Worker |
 | **Stretch:** Float (DS-35) | An always-on-top mini shelf; you can drag the file back out with `QDrag` | UI |
 
@@ -438,7 +438,9 @@ class Op:
     hide_if_same_ext: str | None = None            # hide the "PNG" petal for .png input
 
 def register(op: Op) -> Op: ...
-def ops_for(paths: Sequence[Path], wheel: Wheel) -> list[Op]: ...     # intersection + availability + default order
+def ops_for(paths: Sequence[Path], wheel: Wheel) -> list[Op]: ...     # intersection + availability + default order;
+    # an Op listed in another's children is left out (it is in that Op's ring), and so is an Op whose children all are
+def children_for(op: Op, paths: Sequence[Path]) -> list[Op]: ...     # op's outer ring: its valid, available children
 def get(op_id: str) -> Op: ...
 
 # Worker-side function signature (every converter/tool):
@@ -452,11 +454,18 @@ class JobContext:
     def cancelled(self) -> bool: ...
     def redirect(self, path: Path) -> Path: ...
         # FR-5.3: the same name in Downloads; any op writing outside output_path calls it on PermissionError
+    def reserve(self, base: Path) -> Path: ...
+        # the first free base, base (2), … as an empty *.part, in that folder or not at all (Copy to, Move to)
+    def copy_text(self, text: str) -> None: ...
+        # put text on the clipboard when the job finishes; the UI process does it (Copy path, SHA-256)
+    final: list[Path]                 # outputs the op renamed itself; JobManager leaves their names alone
+    moves: list[tuple[Path, Path]]    # (from, to) per item Move to moved, for Undo
 
 @dataclass
 class JobResult:
     op_id: str; inputs: list[Path]; outputs: list[Path]; ok: bool; message: str; undo: dict
     cancelled: bool = False   # cancelled jobs get no toast and no history entry
+    copied: str = ""          # text for the clipboard; the App sets it on the Qt thread
     # message: the failure, or a note on a successful job (it went to Downloads, FR-5.3)
 
 def apply_undo(undo: dict) -> list[Path]: ...   # FR-5.6: reverses JobResult.undo; returns outputs kept because they changed
@@ -552,7 +561,7 @@ LAUNCHER_OPEN ──click / 1-8 / Esc / outside click / 10 s──► IDLE
                "ts": "2026-10-21T10:02:11", "undone": false } ],
   "usage": { "image": { "convert.image.png": 12, "tools.image.compress": 4 } } }
 ```
-It keeps at most 20 jobs (FIFO), newest first, and writes atomically. Cancelled jobs are not kept. `undo.stamps` holds `[size, mtime_ns]` per path, taken when the job finished. Undo keeps any output whose stamp no longer matches, because it is no longer the file the job wrote. `undo.dirs` (optional) lists the output folders the job itself made, such as `<stem> pages`, but not parents created on the way, such as a missing Downloads. Undo removes them once they are empty. Undo refuses outputs on network and removable drives: there is no Recycle Bin there, and the shell would delete them for good without asking. `undone` is set after an Undo, so a job is undone only once. `usage` counts successful jobs whose inputs all share one kind (the wheel's ordering key). An unreadable file is moved to `history.bad.json`.
+It keeps at most 20 jobs (FIFO), newest first, and writes atomically. Cancelled jobs are not kept. `undo.stamps` holds `[size, mtime_ns]` per path, taken when the job finished. Undo keeps any output whose stamp no longer matches, because it is no longer the file the job wrote. `undo.dirs` (optional) lists the output folders the job itself made, such as `<stem> pages`, but not parents created on the way, such as a missing Downloads. Undo removes them once they are empty. Undo refuses outputs on network and removable drives: there is no Recycle Bin there, and the shell would delete them for good without asking. A Move to job has `{"type": "move", "moves": [[from, to], …], "stamps": […]}` instead: Undo moves each item back, unless it changed since or its old place is taken again. `undone` is set after an Undo, so a job is undone only once. `usage` counts successful jobs whose inputs all share one kind (the wheel's ordering key). An unreadable file is moved to `history.bad.json`.
 
 ---
 

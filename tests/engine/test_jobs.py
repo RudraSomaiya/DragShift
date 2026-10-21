@@ -329,7 +329,7 @@ def test_apply_undo_keeps_a_folder_the_user_added_to(tmp_path: Path, trashed: li
 
 def test_apply_undo_rejects_an_unknown_type() -> None:
     with pytest.raises(ValueError, match="cannot undo"):
-        apply_undo({"type": "move"})
+        apply_undo({"type": "rename"})
 
 
 def test_undo_a_finished_job(qtbot, jm: JobManager, tmp_path: Path, trashed: list[Path]) -> None:

@@ -6,6 +6,7 @@ The public home of ``JobContext`` is ``dragshift.engine.jobs`` (PRD §9.4), whic
 
 import importlib
 import os
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -69,8 +70,43 @@ def _new_folder(base: Path, ctx: "JobContext") -> Path:
         return folder
 
 
+ERROR_NOT_SAME_DEVICE = 17  # winerror: a rename across drives
+
+
+def move_path(src: Path, dst: Path) -> None:
+    """Move a file or folder to ``dst``, which must not exist. A rename on the same drive;
+    across drives a copy, then the original is deleted once the copy is complete."""
+    try:
+        os.rename(src, dst)  # fails rather than replace on Windows
+        return
+    except OSError as e:
+        if getattr(e, "winerror", None) != ERROR_NOT_SAME_DEVICE:
+            raise
+    if src.is_dir():
+        shutil.copytree(src, dst, symlinks=True)
+        shutil.rmtree(src)
+    else:
+        with src.open("rb") as f, dst.open("xb") as out:  # "x": never over a file made since
+            shutil.copyfileobj(f, out, 1 << 20)
+        shutil.copystat(src, dst)
+        src.unlink()
+
+
 def final_path(part: Path) -> Path:
     return part.with_name(part.name.removesuffix(PART))
+
+
+def finalize(part: Path) -> Path:
+    """Rename ``x.jpg.part`` → ``x.jpg``, never over an existing file (FR-5.2, NFR-4)."""
+    if part.suffix != PART:
+        return part
+    while True:
+        target = free_path(final_path(part))
+        try:
+            part.rename(target)  # on Windows rename fails rather than replace
+            return target
+        except FileExistsError:
+            continue  # someone created it in between; pick the next free name
 
 
 class CancelDir:
@@ -103,6 +139,9 @@ class JobContext:
         # way such as a missing Downloads: these are what Undo removes and Open shows.
         self.out_dirs: list[Path] = []
         self.redirected = False  # an output went to Downloads (FR-5.3)
+        self.copied = ""  # text for the clipboard, set on the Qt thread (Copy path, SHA-256)
+        self.final: list[Path] = []  # outputs the op renamed itself: JobManager leaves them be
+        self.moves: list[tuple[Path, Path]] = []  # (from, to) per moved source, for Undo
 
     def output_path(
         self, src: Path, *, ext: str, label: str | None = None, folder: Path | None = None
@@ -115,11 +154,12 @@ class JobContext:
         """
         out_dir = folder if folder is not None else src.parent
         stem = src.name if src.is_dir() else src.stem
-        name = f"{stem}{f' {label}' if label else ''}.{ext.lstrip('.')}"
+        ext = ext.lstrip(".")
+        name = f"{stem}{f' {label}' if label else ''}{f'.{ext}' if ext else ''}"
         try:
-            return self._reserve(out_dir / name)
+            return self.reserve(out_dir / name)
         except PermissionError:
-            return self._reserve(self.redirect(out_dir / name))
+            return self.reserve(self.redirect(out_dir / name))
 
     def redirect(self, path: Path) -> Path:
         """FR-5.3: where ``path`` goes after its folder refused a write: the same name in
@@ -132,8 +172,10 @@ class JobContext:
         self._make_dirs(fallback.parent)
         return fallback
 
-    def _reserve(self, base: Path) -> Path:
-        """Create the first free ``base``, ``base (2)``, … as an empty ``.part`` file."""
+    def reserve(self, base: Path) -> Path:
+        """Create the first free ``base``, ``base (2)``, … as an empty ``.part`` file and
+        return it. Unlike ``output_path`` it never goes to Downloads: Copy to and Move to
+        write where the user pointed, or fail."""
         self._make_dirs(base.parent)
         n = 1
         while True:
@@ -192,6 +234,11 @@ class JobContext:
     def cancelled(self) -> bool:
         return self.job_id in self._cancel
 
+    def copy_text(self, text: str) -> None:
+        """Put ``text`` on the clipboard when the job finishes. The UI process does it, since a
+        worker has no window to own the clipboard."""
+        self.copied = text
+
 
 def resolve(func: str) -> Any:
     module, _, attr = func.partition(":")
@@ -248,4 +295,13 @@ def run_job(func: str, groups: list[list[Path]], params: dict, ctx: JobContext) 
         result["dirs"] = dirs
     if ctx.redirected and outputs:
         result["redirected"] = True
+    # Copy to and Move to rename their own outputs: a moved file named "x.part" must keep its
+    # name, and a moved source is never left as a .part that a failed rename would delete.
+    final = [o for o in outputs if o in ctx.final]
+    if final:
+        result["final"] = final
+    if ctx.moves:
+        result["moves"] = [list(m) for m in ctx.moves]
+    if ctx.copied:
+        result["copied"] = ctx.copied
     return result
