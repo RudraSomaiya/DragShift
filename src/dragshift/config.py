@@ -278,6 +278,10 @@ class ConfigStore(QObject):
     def config(self) -> Config:
         return self._config
 
+    @property
+    def path(self) -> Path:
+        return self._path
+
     def update(self, new: Config) -> None:
         """Save ``new`` (atomically) and announce it. Does nothing if it equals the current one."""
         if new == self._config:

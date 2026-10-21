@@ -8,6 +8,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from PySide6.QtCore import QPoint
 from pytestqt.qtbot import QtBot
 
 from dragshift import app as app_module
@@ -88,6 +89,33 @@ def test_the_real_pipeline_converts_and_leaves_the_source_alone(
     assert (tmp_path / "photo.jpg").is_file()
     assert (sha(source), source.stat().st_mtime_ns) == before  # not moved, rewritten or touched
     assert not list(tmp_path.glob("*.part"))
+
+
+def test_a_quick_launch_tap_opens_that_launcher_wheel(
+    the_app: App, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    opened: list[tuple] = []
+    monkeypatch.setattr(the_app.launcher, "open", lambda kind, at: opened.append((kind, at)))
+    the_app.gesture.quick_launch.emit("sites", QPoint(10, 20))
+    assert opened == [("sites", QPoint(10, 20))]
+
+
+def test_a_picked_slot_is_launched(the_app: App, monkeypatch: pytest.MonkeyPatch) -> None:
+    from dragshift import app as app_module
+    from dragshift.config import Config, Launcher, LauncherApp, LauncherSite
+
+    config = Config(
+        launcher=Launcher(
+            apps=(LauncherApp(target="C:/a.exe"),), sites=(LauncherSite(url="x.com"),)
+        )
+    )
+    monkeypatch.setattr(type(the_app.store), "config", property(lambda _self: config))
+    launched: list = []
+    monkeypatch.setattr(app_module.apps, "launch_app", lambda s: launched.append(s.target))
+    monkeypatch.setattr(app_module.sites, "launch_site", lambda s: launched.append(s.url))
+    the_app.launcher.picked.emit("apps", 0)
+    the_app.launcher.picked.emit("sites", 0)
+    assert launched == ["C:/a.exe", "x.com"]
 
 
 def test_hooks_are_not_started_by_building_the_app(the_app: App) -> None:
