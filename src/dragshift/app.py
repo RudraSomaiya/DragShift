@@ -12,7 +12,7 @@ import signal
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Qt, QTimer, Slot
+from PySide6.QtCore import QObject, QPoint, Qt, QTimer, Slot
 from PySide6.QtWidgets import QApplication
 
 from dragshift.config import Config, ConfigStore
@@ -45,6 +45,7 @@ class App(QObject):
         self.store.changed.connect(self.on_config_changed)
         self.wheel.dropped.connect(self.on_dropped)
         self.jobs.finished.connect(self.on_finished)
+        self.gesture.quick_launch.connect(self.on_quick_launch)
 
     @Slot(object)
     def on_config_changed(self, config: Config) -> None:
@@ -59,6 +60,11 @@ class App(QObject):
         # Settings > Output > JPEG/WebP quality (FR-8.1), read at drop time so it applies live.
         quality = self.store.config.output.jpeg_quality
         self.jobs.submit(op_id, list(paths), {"quality": quality})
+
+    @Slot(str, QPoint)
+    def on_quick_launch(self, kind: str, at: QPoint) -> None:
+        """A tap passed every gate (FR-3.1, FR-3.2). The launcher wheels come with DS-19."""
+        log.info("Quick Launch: %s wheel at (%d, %d)", kind, at.x(), at.y())
 
     @Slot(str, object)
     def on_finished(self, _job_id: str, result: JobResult) -> None:

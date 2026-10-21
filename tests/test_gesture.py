@@ -71,12 +71,47 @@ class FakeProbe:
         return self.held
 
 
+@dataclasses.dataclass
+class FakeContext:
+    """A desktop where every Quick Launch gate passes, unless a test changes a field."""
+
+    root: tuple[int, str] = (222, "Progman")
+    focused: str | None = "SysListView32"
+    state: int | None = 5  # QUNS_ACCEPTS_NOTIFICATIONS
+    process: str | None = "C:\\Windows\\explorer.exe"
+    selected: int | None = 0
+    asked: int = 0  # how many times the gates were checked
+
+    def foreground(self) -> tuple[int, str]:
+        self.asked += 1
+        return self.root
+
+    def focused_class(self) -> str | None:
+        return self.focused
+
+    def notification_state(self) -> int | None:
+        return self.state
+
+    def foreground_process(self) -> str | None:
+        return self.process
+
+    def selection_count(self, hwnd: int, root_class: str) -> int | None:
+        return self.selected
+
+
 class Rig:
-    def __init__(self, probe: FakeProbe | None = None, config: Config | None = None) -> None:
+    def __init__(
+        self,
+        probe: FakeProbe | None = None,
+        config: Config | None = None,
+        context: FakeContext | None = None,
+    ) -> None:
         self.wheel = FakeWheel()
         self.probe = probe or FakeProbe()
+        self.context = context or FakeContext()
         self.cursor = QPoint(500, 400)
         self.selection_calls: list[tuple[int, str]] = []
+        self.launches: list[tuple[str, QPoint]] = []
 
         def selection(hwnd: int, cls: str) -> list[Path]:
             self.selection_calls.append((hwnd, cls))
@@ -88,10 +123,17 @@ class Rig:
             probe=self.probe,
             selection=selection,
             cursor_pos=lambda: self.cursor,
+            context=self.context,
         )
+        self.gc.quick_launch.connect(lambda kind, at: self.launches.append((kind, at)))
 
-    def send(self, kind: InputKind, x: int = 0, y: int = 0, vk: int = 0) -> None:
-        self.gc.on_input(RawInput(kind, x, y, vk, 0))
+    def send(self, kind: InputKind, x: int = 0, y: int = 0, vk: int = 0, ms: float = 0) -> None:
+        self.gc.on_input(RawInput(kind, x, y, vk, int(ms * 1_000_000)))
+
+    def tap(self, vk: int, at_ms: float = 0, hold_ms: float = 80) -> None:
+        """Key down at ``at_ms`` and up ``hold_ms`` later, in hook time."""
+        self.send(InputKind.KEY_DOWN, vk=vk, ms=at_ms)
+        self.send(InputKind.KEY_UP, vk=vk, ms=at_ms + hold_ms)
 
     def press(self, x: int = 100, y: int = 100) -> None:
         self.send(InputKind.LBUTTON_DOWN, x, y)
@@ -417,6 +459,133 @@ def test_other_mouse_events_are_ignored_in_the_drag_branch(rig: Rig) -> None:
     assert rig.gc.state is State.DRAGGING
 
 
+# --- taps: Quick Launch (FR-3.1) --------------------------------------------------------------------
+def test_a_shift_tap_asks_for_the_apps_wheel_at_the_cursor(rig: Rig) -> None:
+    rig.tap(LSHIFT)
+    assert rig.launches == [("apps", QPoint(500, 400))]
+    assert rig.gc.state is State.IDLE
+    assert rig.wheel.calls == []  # the drag wheel is not involved
+
+
+def test_a_ctrl_tap_asks_for_the_sites_wheel(rig: Rig) -> None:
+    rig.tap(0xA3)  # right Ctrl
+    assert [kind for kind, _ in rig.launches] == ["sites"]
+
+
+def test_alt_is_not_a_launch_key_by_default(rig: Rig) -> None:
+    rig.tap(LALT)
+    assert rig.launches == []
+    assert rig.context.asked == 0  # the gates are not even checked
+
+
+@pytest.mark.parametrize(("hold_ms", "expected"), [(299, 1), (300, 1), (301, 0), (900, 0)])
+def test_a_tap_is_released_within_300_ms(rig: Rig, hold_ms: float, expected: int) -> None:
+    rig.tap(LSHIFT, hold_ms=hold_ms)
+    assert len(rig.launches) == expected
+
+
+def test_timing_uses_hook_time_not_arrival_time(rig: Rig) -> None:
+    """The events can reach the Qt thread late together; their own stamps decide."""
+    rig.send(InputKind.KEY_DOWN, vk=LSHIFT, ms=10_000)
+    rig.send(InputKind.KEY_UP, vk=LSHIFT, ms=10_120)
+    assert len(rig.launches) == 1
+
+
+def test_auto_repeat_means_a_hold_not_a_tap(rig: Rig) -> None:
+    rig.send(InputKind.KEY_DOWN, vk=LSHIFT, ms=0)
+    rig.send(InputKind.KEY_DOWN, vk=LSHIFT, ms=250)  # repeat with a short repeat delay
+    rig.send(InputKind.KEY_UP, vk=LSHIFT, ms=280)
+    assert rig.launches == []
+
+
+@pytest.mark.parametrize(
+    "between",
+    [
+        lambda r: r.tap(0x41, 20, 10),  # Shift+A: typing a capital letter
+        lambda r: r.send(InputKind.MOUSE_OTHER, ms=20),  # a right click or the scroll wheel
+        lambda r: (r.press(), r.release()),  # a Shift+click to extend a selection
+    ],
+)
+def test_anything_in_between_cancels_the_tap(rig: Rig, between) -> None:
+    rig.send(InputKind.KEY_DOWN, vk=LSHIFT, ms=0)
+    between(rig)
+    rig.send(InputKind.KEY_UP, vk=LSHIFT, ms=100)
+    assert rig.launches == []
+    assert rig.gc.state is State.IDLE
+
+
+def test_a_modifier_pressed_while_another_key_is_held_is_not_a_tap(rig: Rig) -> None:
+    rig.send(InputKind.KEY_DOWN, vk=0x41, ms=0)
+    rig.tap(LSHIFT, at_ms=10)
+    rig.send(InputKind.KEY_UP, vk=0x41, ms=200)
+    rig.tap(LSHIFT, at_ms=300)  # with nothing else held it works again
+    assert len(rig.launches) == 1
+
+
+def test_modifiers_during_a_drag_are_never_taps(rig: Rig) -> None:
+    rig.start_drag()
+    rig.tap(LSHIFT)  # opens the Convert wheel instead
+    rig.release()
+    assert rig.launches == []
+    assert len(rig.opens()) == 1
+
+
+def test_a_shift_that_opened_a_drag_wheel_is_not_a_tap_when_released(rig: Rig) -> None:
+    rig.start_drag()
+    rig.key(LSHIFT)
+    rig.wheel.close()  # dropped on a petal
+    rig.release_key(LSHIFT)
+    assert rig.launches == []
+
+
+def test_double_tap_mode(qapp: object) -> None:
+    rig = Rig(config=Config(keys=Keys(tap_mode="double")))
+    rig.tap(LSHIFT, at_ms=0)
+    assert rig.launches == []  # one tap is not enough
+    rig.tap(LSHIFT, at_ms=80 + 350)  # second key-down 350 ms after the first key-up
+    assert len(rig.launches) == 1
+    rig.tap(LSHIFT, at_ms=2000)
+    rig.tap(LSHIFT, at_ms=2080 + 351)  # too slow: this one only counts as a new first tap
+    assert len(rig.launches) == 1
+    rig.tap(LSHIFT, at_ms=2600)
+    assert len(rig.launches) == 2
+
+
+def test_double_tap_needs_the_same_key_and_nothing_in_between(qapp: object) -> None:
+    rig = Rig(config=Config(keys=Keys(tap_mode="double")))
+    rig.tap(LSHIFT, at_ms=0)
+    rig.tap(LCTRL, at_ms=150)  # Shift then Ctrl: neither wheel
+    assert rig.launches == []
+    rig.tap(LSHIFT, at_ms=1000)
+    rig.send(InputKind.MOUSE_OTHER, ms=1100)
+    rig.tap(LSHIFT, at_ms=1150)
+    assert rig.launches == []
+
+
+def test_a_failed_gate_means_nothing_happens(rig: Rig) -> None:
+    rig.context.selected = 1  # G-d: a file is selected
+    rig.tap(LSHIFT)
+    assert rig.launches == []
+    assert rig.context.asked == 1
+
+
+def test_launch_keys_follow_the_config_live(rig: Rig) -> None:
+    rig.gc.apply_config(Config(keys=Keys(launch_apps="alt", launch_sites="alt")))
+    rig.tap(LSHIFT)
+    rig.tap(LALT, at_ms=500)
+    assert [kind for kind, _ in rig.launches] == ["apps"]  # the same key for both: Apps wins
+
+
+def test_paused_or_switched_off_quick_launch_does_nothing(rig: Rig) -> None:
+    from dragshift.config import Launcher
+
+    rig.gc.apply_config(Config(general=General(paused=True)))
+    rig.tap(LSHIFT)
+    rig.gc.apply_config(Config(launcher=Launcher(enabled=False)))
+    rig.tap(LSHIFT, at_ms=500)
+    assert rig.launches == []
+
+
 # --- with the real WheelWindow ----------------------------------------------------------------------
 def test_drives_the_real_wheel_window(qapp: object, qtbot: QtBot) -> None:
     from dragshift.ui.wheel import WheelWindow
@@ -473,6 +642,13 @@ def test_selected_paths_never_raises() -> None:
     assert isinstance(shell.selected_paths(0, "Progman"), list)
     assert shell.selected_paths(0, "CabinetWClass") == []  # no such window
     assert shell.selected_paths(0, "Chrome_WidgetWin_1") == []  # not an Explorer view
+
+
+def test_selection_count_never_raises() -> None:
+    count = shell.selection_count(0, "Progman")  # the real desktop
+    assert count is None or count >= 0
+    assert shell.selection_count(0, "CabinetWClass") is None  # no such window: unknown
+    assert shell.selection_count(0, "Chrome_WidgetWin_1") is None
 
 
 # --- the UI process stays lean (CLAUDE.md rule 2) ----------------------------------------------------
