@@ -7,6 +7,9 @@
   pool start.
 - Workers write ``*.part`` files; on success they are renamed to their final names here.
 - A Qt timer polls futures and drains progress while jobs run, so signals fire on the Qt thread.
+- Undo (FR-5.6) is ``apply_undo`` on a ``JobResult.undo``; ``History.undo`` is its caller, so a
+  job is undone once and from the toast and History alike. It sends outputs to the Recycle Bin
+  from the UI process: ``send2trash`` is a thin shell API wrapper, imported only when needed.
 """
 
 import multiprocessing
@@ -25,6 +28,7 @@ from PySide6.QtCore import QObject, QTimer, Signal
 
 from dragshift.engine import registry
 from dragshift.engine.worker import (
+    CANCELLED,
     PART,
     CancelDir,
     JobContext,
@@ -34,7 +38,57 @@ from dragshift.engine.worker import (
     run_job,
 )
 
-__all__ = ["JobContext", "JobManager", "JobResult"]
+__all__ = ["CANCELLED", "JobContext", "JobManager", "JobResult", "apply_undo", "stamp"]
+
+REDIRECTED = "Saved to Downloads: the source folder is read-only"  # FR-5.3 toast note
+
+
+def _trash(paths: list[Path]) -> None:
+    """Send ``paths`` to the Recycle Bin. Refuses drives that have none: there the shell
+    would delete them for good, without asking."""
+    from dragshift.platform.files import has_recycle_bin
+
+    no_bin = [p for p in paths if not has_recycle_bin(p)]
+    if no_bin:
+        raise OSError(f"{no_bin[0].anchor} has no Recycle Bin. Delete the file yourself instead.")
+    from send2trash import send2trash  # only loaded when Undo is used
+
+    send2trash(paths)
+
+
+def stamp(path: Path) -> list[int]:
+    """[size, mtime_ns]: how Undo recognises an output it wrote (JSON-friendly)."""
+    st = path.stat()
+    return [st.st_size, st.st_mtime_ns]
+
+
+def apply_undo(undo: dict) -> list[Path]:
+    """Reverse a job from its ``JobResult.undo`` (FR-5.6). ``"trash"`` sends the outputs that
+    still exist to the Recycle Bin, then removes the output folders the job made once they are
+    empty. An output whose size or modification time changed since the job (``stamps``) is not
+    the file the job wrote any more, so it is kept: those are returned.
+
+    Raises ``ValueError`` for an undo type it does not know and ``OSError`` if the Recycle Bin
+    refuses."""
+    kind = undo.get("type")
+    if kind != "trash":
+        raise ValueError(f"cannot undo {kind!r}")
+    paths = [Path(p) for p in undo.get("paths", ())]
+    stamps = undo.get("stamps") or [None] * len(paths)
+    trash: list[Path] = []
+    kept: list[Path] = []
+    for path, known in zip(paths, stamps, strict=True):
+        if not path.exists():
+            continue
+        (kept if known is not None and stamp(path) != list(known) else trash).append(path)
+    if trash:
+        _trash(trash)
+    for folder in reversed([Path(d) for d in undo.get("dirs", ())]):  # deepest first
+        try:
+            folder.rmdir()  # only succeeds when empty: anything the user added stays
+        except OSError:
+            pass
+    return kept
 
 
 @dataclass
@@ -43,8 +97,9 @@ class JobResult:
     inputs: list[Path]
     outputs: list[Path]
     ok: bool
-    message: str
+    message: str  # the failure, or a note on a successful job (it went to Downloads, FR-5.3)
     undo: dict
+    cancelled: bool = False  # cancelled by the user or on quit: no toast, no history
 
 
 @dataclass
@@ -128,9 +183,6 @@ class JobManager(QObject):
             self._local_cancel[job_id] = True
         else:
             self._cancel_dir.set(job_id)  # the worker sees it through ctx.cancelled()
-
-    def undo(self, job_id: str) -> None:
-        raise NotImplementedError("Undo lands in DS-18 (FR-5.6)")
 
     def shutdown(self) -> None:
         """Stop the pool now; call on app quit. Running worker jobs are cancelled, so they
@@ -219,11 +271,11 @@ class JobManager(QObject):
                 self._idle.start(self.IDLE_SHUTDOWN_MS)
 
     def _result(self, job: _Job) -> JobResult:
-        def fail(message: str) -> JobResult:
-            return JobResult(job.op_id, job.inputs, [], False, message, {})
+        def fail(message: str, cancelled: bool = False) -> JobResult:
+            return JobResult(job.op_id, job.inputs, [], False, message, {}, cancelled)
 
         if job.future.cancelled():
-            return fail("Cancelled")
+            return fail(CANCELLED, cancelled=True)
         try:
             raw = job.future.result()
         except BrokenProcessPool:
@@ -234,6 +286,8 @@ class JobManager(QObject):
             return fail("The worker process crashed")
         except Exception as e:  # noqa: BLE001 - e.g. pickling; run_job catches the rest
             return fail(f"{type(e).__name__}: {e}")
+        if raw.get("cancelled"):
+            return fail(raw["message"], cancelled=True)
 
         # Partial results are kept (FR-4.2): finalize every output the worker produced.
         outputs: list[Path] = []
@@ -245,7 +299,17 @@ class JobManager(QObject):
                 Path(part).unlink(missing_ok=True)
                 messages.append(f"Could not save {final_path(Path(part)).name}: {e}")
         ok = raw["ok"] and not messages
-        undo = {"type": "trash", "paths": outputs} if outputs else {}
+        if raw.get("redirected") and outputs:
+            messages.append(REDIRECTED)  # a note on a successful job too, for its toast
+        undo: dict = {}
+        if outputs:
+            undo = {"type": "trash", "paths": outputs}
+            try:  # so Undo can tell these files from ones saved later under the same names
+                undo["stamps"] = [stamp(o) for o in outputs]
+            except OSError:
+                pass  # without stamps Undo trashes whatever is there, as before
+            if raw.get("dirs"):
+                undo["dirs"] = list(raw["dirs"])
         return JobResult(job.op_id, job.inputs, outputs, ok, "; ".join(messages), undo)
 
     @staticmethod

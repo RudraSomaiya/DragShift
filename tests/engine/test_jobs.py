@@ -12,8 +12,17 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
+from dragshift.engine import jobs as jobs_module
 from dragshift.engine import registry
-from dragshift.engine.jobs import JobManager, JobResult, _Job
+from dragshift.engine.jobs import (
+    CANCELLED,
+    REDIRECTED,
+    JobManager,
+    JobResult,
+    _Job,
+    apply_undo,
+    stamp,
+)
 from dragshift.engine.kinds import Kind
 from dragshift.engine.registry import Op, register
 
@@ -56,7 +65,11 @@ def test_png_to_jpg_end_to_end_then_pool_shuts_down_when_idle(
 
     assert first.ok, first.message
     assert first.outputs == [tmp_path / "photo.jpg"]
-    assert first.undo == {"type": "trash", "paths": first.outputs}
+    assert first.undo == {
+        "type": "trash",
+        "paths": first.outputs,
+        "stamps": [stamp(first.outputs[0])],  # Undo recognises the file it wrote
+    }
     assert second.outputs == [tmp_path / "photo (2).jpg"]  # never overwrites (FR-5.2)
     with Image.open(first.outputs[0]) as out:
         assert out.format == "JPEG" and out.size == (64, 48)
@@ -127,7 +140,7 @@ def test_a_failed_rename_keeps_the_other_outputs(jm: JobManager, tmp_path: Path)
     res = jm._result(_Job("convert.image.jpg", [], done, pool=None))
     assert res.outputs == [tmp_path / "a.jpg"]
     assert not res.ok and res.message.startswith("Could not save b.jpg")
-    assert res.undo == {"type": "trash", "paths": [tmp_path / "a.jpg"]}
+    assert res.undo["paths"] == [tmp_path / "a.jpg"]
 
 
 def report_progress(paths, params, ctx):
@@ -240,3 +253,132 @@ class TestInlineJobs:
             jm.submit("t.each", [Path("a.pdf")])
         with pytest.raises(ValueError, match="does not accept"):
             jm.submit("t.each", [])
+
+
+# --- FR-5.3 Downloads fallback and FR-5.6 Undo -------------------------------------------------
+def test_read_only_source_folder_saves_to_downloads(
+    qtbot, jm: JobManager, tmp_path: Path, make_read_only, downloads: Path
+) -> None:
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    src = locked / "photo.png"
+    Image.new("RGB", (8, 8)).save(src)
+    make_read_only(locked)
+    res = run(qtbot, jm, "convert.image.jpg", [src])
+    assert res.ok, res.message  # a note, not a failure
+    assert res.message == REDIRECTED
+    assert res.outputs == [downloads / "photo.jpg"]
+    assert sorted(p.name for p in locked.iterdir()) == ["photo.png"]
+
+
+def test_a_note_does_not_fail_the_job(jm: JobManager, tmp_path: Path) -> None:
+    part = tmp_path / "a.jpg.part"
+    part.write_bytes(b"x")
+    done: Future = Future()
+    done.set_result({"ok": True, "outputs": [part], "message": "", "redirected": True})
+    res = jm._result(_Job("convert.image.jpg", [], done, pool=None))
+    assert res.ok and res.message == REDIRECTED
+
+
+def test_undo_lists_the_output_folders(jm: JobManager, tmp_path: Path) -> None:
+    pages = tmp_path / "doc pages"
+    pages.mkdir()
+    part = pages / "doc 001.png.part"
+    part.write_bytes(b"x")
+    done: Future = Future()
+    done.set_result({"ok": True, "outputs": [part], "message": "", "dirs": [pages]})
+    res = jm._result(_Job("convert.pdf.png", [], done, pool=None))
+    assert res.undo["paths"] == [pages / "doc 001.png"] and res.undo["dirs"] == [pages]
+
+
+@pytest.fixture
+def trashed(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
+    """What Undo sends to the Recycle Bin; the files are deleted instead of really recycled."""
+    got: list[Path] = []
+
+    def fake(paths: list[Path]) -> None:
+        got.extend(paths)
+        for p in paths:
+            p.unlink()
+
+    monkeypatch.setattr(jobs_module, "_trash", fake)
+    return got
+
+
+def test_apply_undo_trashes_outputs_and_removes_empty_folders(
+    tmp_path: Path, trashed: list[Path]
+) -> None:
+    pages = tmp_path / "doc pages"
+    pages.mkdir()
+    out = pages / "doc 001.png"
+    out.write_bytes(b"x")
+    gone = tmp_path / "already deleted.png"
+    apply_undo({"type": "trash", "paths": [str(out), str(gone)], "dirs": [str(pages)]})
+    assert trashed == [out]  # the missing one is skipped
+    assert not pages.exists()
+
+
+def test_apply_undo_keeps_a_folder_the_user_added_to(tmp_path: Path, trashed: list[Path]) -> None:
+    pages = tmp_path / "doc pages"
+    pages.mkdir()
+    (pages / "doc 001.png").write_bytes(b"x")
+    (pages / "notes.txt").write_bytes(b"mine")
+    apply_undo({"type": "trash", "paths": [pages / "doc 001.png"], "dirs": [pages]})
+    assert sorted(p.name for p in pages.iterdir()) == ["notes.txt"]
+
+
+def test_apply_undo_rejects_an_unknown_type() -> None:
+    with pytest.raises(ValueError, match="cannot undo"):
+        apply_undo({"type": "move"})
+
+
+def test_undo_a_finished_job(qtbot, jm: JobManager, tmp_path: Path, trashed: list[Path]) -> None:
+    src = tmp_path / "photo.png"
+    Image.new("RGB", (8, 8)).save(src)
+    res = run(qtbot, jm, "convert.image.jpg", [src])
+    assert apply_undo(res.undo) == []
+    assert trashed == [tmp_path / "photo.jpg"]
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["photo.png"]  # the source stays
+
+
+def test_undo_keeps_a_file_saved_later_under_the_output_s_name(
+    tmp_path: Path, trashed: list[Path]
+) -> None:
+    out = tmp_path / "photo.jpg"
+    out.write_bytes(b"what the job wrote")
+    undo = {"type": "trash", "paths": [out], "stamps": [stamp(out)]}
+    out.unlink()  # the user deleted it ...
+    out.write_bytes(b"... and later saved their own photo.jpg")
+    assert apply_undo(undo) == [out]
+    assert trashed == [] and out.exists()
+
+
+def test_undo_refuses_drives_without_a_recycle_bin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dragshift.platform import files
+
+    monkeypatch.setattr(files, "has_recycle_bin", lambda _p: False)  # a network share
+    out = tmp_path / "a.jpg"
+    out.write_bytes(b"x")
+    with pytest.raises(OSError, match="no Recycle Bin"):
+        apply_undo({"type": "trash", "paths": [out]})
+    assert out.exists()  # never deleted for good
+
+
+def test_a_local_drive_has_a_recycle_bin(tmp_path: Path) -> None:
+    from dragshift.platform.files import has_recycle_bin
+
+    assert has_recycle_bin(tmp_path)
+
+
+def test_a_cancelled_job_says_so_in_a_field(qtbot, jm: JobManager, tmp_path: Path) -> None:
+    done: Future = Future()
+    done.set_result({"ok": False, "outputs": [], "message": CANCELLED, "cancelled": True})
+    assert jm._result(_Job("convert.image.jpg", [], done, pool=None)).cancelled
+    never: Future = Future()
+    never.cancel()
+    assert jm._result(_Job("convert.image.jpg", [], never, pool=None)).cancelled
+    failed: Future = Future()
+    failed.set_result({"ok": False, "outputs": [], "message": "Cancelled"})  # just the text
+    assert not jm._result(_Job("convert.image.jpg", [], failed, pool=None)).cancelled

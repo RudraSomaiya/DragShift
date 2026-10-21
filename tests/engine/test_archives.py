@@ -102,6 +102,24 @@ def test_names_already_taken_are_not_overwritten(tmp_path: Path) -> None:
     assert (tmp_path / "pack" / "mine.txt").read_bytes() == b"keep"
 
 
+@pytest.mark.parametrize(
+    ("files", "expected"),
+    [(FILES, "pack"), ({"only.txt": b"x"}, "only.txt")],  # a folder, or the single item
+)
+def test_a_read_only_folder_extracts_to_downloads(
+    tmp_path: Path, make_read_only, downloads: Path, files: dict[str, bytes], expected: str
+) -> None:
+    """FR-5.3 for Extract, which reserves its own .part folder rather than using output_path."""
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    src = make_zip(locked / "pack.zip", files)
+    make_read_only(locked)
+    ctx = JobContext("t")
+    (out,) = finish(archives.extract_archive([src], {}, ctx))
+    assert out == downloads / expected and ctx.redirected
+    assert sorted(p.name for p in locked.iterdir()) == ["pack.zip"]
+
+
 def test_zip_slip_stays_inside(tmp_path: Path) -> None:
     folder = tmp_path / "in"
     folder.mkdir()

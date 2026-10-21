@@ -17,7 +17,18 @@ from PySide6.QtGui import QBrush, QColor, QFont, QLinearGradient
 from dragshift.config import Appearance
 from dragshift.platform import dwm
 
-__all__ = ["DARK", "LIGHT", "Palette", "Theme", "contrast", "label_font", "make", "over", "resolve"]
+__all__ = [
+    "DARK",
+    "LIGHT",
+    "Palette",
+    "Theme",
+    "contrast",
+    "label_font",
+    "make",
+    "over",
+    "resolve",
+    "ui_font",
+]
 
 log = logging.getLogger(__name__)
 
@@ -225,22 +236,30 @@ def resolve(appearance: Appearance) -> Theme:
     return make(dark=dark, accent=accent, reduced_motion=reduced)
 
 
-def label_font(pixel_size: int = 11) -> QFont:
-    """Petal labels: Segoe UI Variable, semibold, 0.4 px letter-spacing (§8.2).
+def ui_font(pixel_size: int, semibold: bool = False) -> QFont:
+    """Segoe UI Variable, falling back to Segoe UI (§8.2).
 
     Under Qt's GDI font engine (used for its RAM, NFR-1) the variable font has no DemiBold
-    weight, so its named Semibold instance comes first; DirectWrite skips that name.
+    weight, so for semibold its named Semibold instance comes first; DirectWrite skips that name.
     """
     font = QFont()
-    font.setFamilies(
-        [
+    if semibold:
+        families = [
             "Segoe UI Variable Text Semibold",
             "Segoe UI Variable Text",
             "Segoe UI Semibold",
             "Segoe UI",
         ]
-    )
+        font.setWeight(QFont.Weight.DemiBold)
+    else:
+        families = ["Segoe UI Variable Text", "Segoe UI"]
+    font.setFamilies(families)
     font.setPixelSize(pixel_size)
-    font.setWeight(QFont.Weight.DemiBold)
+    return font
+
+
+def label_font(pixel_size: int = 11) -> QFont:
+    """Petal labels: Segoe UI Variable, semibold, 0.4 px letter-spacing (§8.2)."""
+    font = ui_font(pixel_size, semibold=True)
     font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0.4)
     return font

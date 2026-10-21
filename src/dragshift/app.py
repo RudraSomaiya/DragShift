@@ -3,7 +3,9 @@
 ``build`` creates the object graph without starting the hooks, so tests can drive it. ``run`` is
 what ``dragshift`` does: single instance (FR-6.3), logs to the console when there is one and
 always to a rotating file (FR-6.1, FR-6.5), autostart kept in step with the config (FR-7.2).
-``--background`` is handled in ``__main__`` (FR-6.2). The tray comes with DS-25.
+``--background`` is handled in ``__main__`` (FR-6.2). Finished jobs go to ``history.json``
+and a toast (FR-5.5, FR-5.7); their usage counts reorder the petals (FR-2.2). The tray, with its
+History menu, comes with DS-25.
 
 UI-process module: it must never import an engine library (CLAUDE.md rule 2).
 """
@@ -24,11 +26,13 @@ from dragshift.config import Config, ConfigStore
 from dragshift.engine import registry
 from dragshift.engine.jobs import JobManager, JobResult
 from dragshift.gesture import GestureController
+from dragshift.history import History
 from dragshift.launcher import apps, sites
 from dragshift.launcher.sites import FaviconCache
 from dragshift.platform import autostart
 from dragshift.platform.hooks import HookInstallError, HookThread
 from dragshift.platform.single_instance import SingleInstance
+from dragshift.ui.job_toasts import JobToasts
 from dragshift.ui.launcher_wheel import LauncherWheel
 from dragshift.ui.wheel import WheelWindow
 
@@ -49,6 +53,8 @@ class App(QObject):
         self.store = store or ConfigStore()
         self._autostart = autostart  # writes the Run key; None in tests, which must not
         self.jobs = JobManager(self)
+        self.history = History(self.store.path.parent / "history.json", self)  # §10.2
+        self.toasts = JobToasts(self.jobs, self.history, log_dir() / "dragshift.log", parent=self)
         self.wheel = WheelWindow()
         icons = self.store.path.parent / "icons"  # FR-3.4: %APPDATA%\DragShift\icons
         self.launcher = LauncherWheel(icons)
@@ -70,12 +76,20 @@ class App(QObject):
         self.launcher.picked.connect(self.on_picked)
         self.launcher.add_requested.connect(self.on_add_requested)
         self.favicons.updated.connect(self.launcher.reload_icons)
+        self.history.changed.connect(self.apply_ordering)
         self.on_config_changed(self.store.config)
+
+    @Slot()
+    def apply_ordering(self) -> None:
+        """FR-2.2: pinned petals from the config, then usage counts from the history."""
+        self.wheel.set_ordering(self.store.config.wheels.pinned, self.history.usage)
 
     @Slot(object)
     def on_config_changed(self, config: Config) -> None:
         self.wheel.set_appearance(config.appearance)  # theme, accent, reduced motion (§8.2)
         self.launcher.set_appearance(config.appearance)
+        self.toasts.stack.set_appearance(config.appearance)
+        self.apply_ordering()
         self.launcher.set_launcher(config.launcher)
         self.favicons.ensure(config.launcher.sites)  # once per newly added site (FR-3.4)
         if self._autostart is not None:
@@ -98,9 +112,10 @@ class App(QObject):
         # Settings > Output > JPEG/WebP quality and PDF raster DPI (FR-8.1), read at drop time so
         # they apply live.
         output = self.store.config.output
-        self.jobs.submit(
+        job_id = self.jobs.submit(
             op_id, list(paths), {"quality": output.jpeg_quality, "dpi": output.pdf_dpi}
         )
+        self.toasts.started(job_id, op_id, list(paths))  # a progress toast after 1 s (FR-4.5)
 
     @Slot(str, QPoint)
     def on_quick_launch(self, kind: str, at: QPoint) -> None:
@@ -123,7 +138,8 @@ class App(QObject):
             slot = launcher.sites[index]
             name, error = sites.label_of(slot), sites.launch_site(slot)
         if error:
-            log.warning("could not open %s: %s", name, error)  # a toast once DS-18 lands
+            log.warning("could not open %s: %s", name, error)
+            self.toasts.error(f"Couldn't open {name}", error)
         else:
             log.info("Quick Launch: opened %s", name)
 
@@ -133,16 +149,19 @@ class App(QObject):
         log.info("empty %s slot %d: add it in config.json until Settings exists", kind, index + 1)
 
     @Slot(str, object)
-    def on_finished(self, _job_id: str, result: JobResult) -> None:
+    def on_finished(self, job_id: str, result: JobResult) -> None:
         if result.ok:
             log.info("%s: %s -> %s", result.op_id, _names(result.inputs), _names(result.outputs))
         else:
             log.warning("%s failed: %s", result.op_id, result.message)
+        self.history.record(job_id, result)  # first, so the toast's Undo finds it (FR-5.7)
+        self.toasts.finished(job_id, result)  # FR-5.5
 
     def shutdown(self) -> None:
         self.hooks.stop_hooks()
         self.wheel.close()
         self.launcher.close()
+        self.toasts.shutdown()
         self.jobs.shutdown()
 
 

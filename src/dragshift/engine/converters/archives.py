@@ -1,7 +1,8 @@
 """Archive and folder converters (PRD §6.1 archive and folder rows).
 
 - **Extract here:** one item inside goes next to the archive as it is. Several items go into a
-  folder named after the archive, so nothing spills over the folder.
+  folder named after the archive, so nothing spills over the folder. If the archive's folder
+  cannot be written to, both go to Downloads instead (FR-5.3).
   - ZIP: ``zipfile``. TAR, TAR.GZ, TGZ: ``tarfile`` with the ``data`` filter, which refuses
     absolute paths, ``..`` and links that leave the folder. A ``.gz`` that is not a tar is one
     gzipped file.
@@ -122,8 +123,16 @@ def extract(src: Path, dest: Path, ctx: "JobContext") -> None:
         _extract_bsdtar(src, dest, ctx)
 
 
-def _reserve_dir(target: Path) -> Path:
-    """Create and return a free ``<target>.part`` folder (``x (2).part`` if ``x`` is taken)."""
+def _reserve_dir(target: Path, ctx: "JobContext") -> Path:
+    """Create and return a free ``<target>.part`` folder (``x (2).part`` if ``x`` is taken), in
+    Downloads if ``target``'s folder cannot be written to (FR-5.3)."""
+    try:
+        return _free_part_dir(target)
+    except PermissionError:
+        return _free_part_dir(ctx.redirect(target))
+
+
+def _free_part_dir(target: Path) -> Path:
     n = 1
     while True:
         name = target.name if n == 1 else f"{target.name} ({n})"  # "my.data (2)", not "my (2).data"
@@ -139,13 +148,13 @@ def _reserve_dir(target: Path) -> Path:
 def extract_here(src: Path, ctx: "JobContext") -> Path | None:
     """Extract next to ``src``. Returns the item or the ``.part`` folder (JobManager renames
     it), or None if cancelled."""
-    part = _reserve_dir(src.parent / base_name(src))
+    part = _reserve_dir(src.parent / base_name(src), ctx)
     try:
         extract(src, part, ctx)
         entries = list(part.iterdir())
         if len(entries) == 1:  # one item: it goes next to the archive, no extra folder
             only = entries[0]
-            target = free_path(src.parent / only.name)
+            target = free_path(part.parent / only.name)  # part.parent: maybe Downloads
             only.rename(target)
             part.rmdir()
             return target

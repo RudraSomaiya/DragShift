@@ -2,10 +2,19 @@
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from pathlib import Path
 
-from dragshift.engine.kinds import kind_of
+from dragshift.engine.kinds import input_kind
 from dragshift.engine.registry import Op
+
+__all__ = [
+    "MAX_PETALS",
+    "MAX_RING",
+    "Petal",
+    "WheelLayout",
+    "build_layout",
+    "input_kind",
+    "order_ops",
+]
 
 MAX_PETALS = 8  # petals on the wheel itself, More… included
 MAX_RING = 16  # Ops in the More… ring; any beyond this are dropped
@@ -27,12 +36,6 @@ class Petal:
 class WheelLayout:
     petals: tuple[Petal, ...] = ()
     ring: tuple[Petal, ...] = ()  # the More… ring; empty unless the last petal is More…
-
-
-def input_kind(paths: Sequence[Path]) -> str | None:
-    """The one Kind shared by ``paths`` (the key of pinned order and usage counts), else None."""
-    kinds = {kind_of(p) for p in paths}
-    return kinds.pop().value if len(kinds) == 1 else None
 
 
 def order_ops(

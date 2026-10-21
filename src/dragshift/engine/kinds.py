@@ -1,5 +1,6 @@
 """Input kinds and extension → Kind detection (PRD §6.1, §9.4)."""
 
+from collections.abc import Sequence
 from enum import StrEnum
 from pathlib import Path
 
@@ -66,3 +67,10 @@ def kind_of(path: Path) -> Kind:
     if path.is_dir():
         return Kind.FOLDER
     return _KIND_BY_EXT.get(path.suffix.lower().lstrip("."), Kind.OTHER)
+
+
+def input_kind(paths: Sequence[Path]) -> str | None:
+    """The one Kind shared by ``paths``, else None: the key of pinned petal order and usage
+    counts (FR-2.2), for the wheel and history.json alike."""
+    kinds = {kind_of(p) for p in paths}
+    return kinds.pop().value if len(kinds) == 1 else None
