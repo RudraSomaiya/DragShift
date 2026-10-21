@@ -95,9 +95,12 @@ class App(QObject):
         if registry.get(op_id).dialog:
             log.warning("%s needs a dialog, which is not built yet; nothing was run", op_id)
             return
-        # Settings > Output > JPEG/WebP quality (FR-8.1), read at drop time so it applies live.
-        quality = self.store.config.output.jpeg_quality
-        self.jobs.submit(op_id, list(paths), {"quality": quality})
+        # Settings > Output > JPEG/WebP quality and PDF raster DPI (FR-8.1), read at drop time so
+        # they apply live.
+        output = self.store.config.output
+        self.jobs.submit(
+            op_id, list(paths), {"quality": output.jpeg_quality, "dpi": output.pdf_dpi}
+        )
 
     @Slot(str, QPoint)
     def on_quick_launch(self, kind: str, at: QPoint) -> None:
