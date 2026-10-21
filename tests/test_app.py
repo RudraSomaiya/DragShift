@@ -45,16 +45,18 @@ def test_a_drop_on_a_petal_submits_that_op_for_those_files(
     monkeypatch.setattr(the_app.jobs, "submit", lambda *a, **k: submitted.append((a, k)) or "id")
     files = [Path("C:/x/a.png"), Path("C:/x/b.png")]
     the_app.wheel.dropped.emit("convert.image.jpg", files)
-    assert submitted == [(("convert.image.jpg", files, {"quality": 85}), {})]
+    assert submitted == [(("convert.image.jpg", files, {"quality": 85, "dpi": 300}), {})]
 
 
-def test_drops_use_the_quality_from_settings(the_app: App, monkeypatch: pytest.MonkeyPatch):
+def test_drops_use_the_quality_and_dpi_from_settings(
+    the_app: App, monkeypatch: pytest.MonkeyPatch
+) -> None:
     submitted: list[tuple] = []
     monkeypatch.setattr(the_app.jobs, "submit", lambda *a, **k: submitted.append(a) or "id")
-    output = dataclasses.replace(the_app.store.config.output, jpeg_quality=60)
+    output = dataclasses.replace(the_app.store.config.output, jpeg_quality=60, pdf_dpi=150)
     the_app.store.update(dataclasses.replace(the_app.store.config, output=output))
     the_app.wheel.dropped.emit("convert.image.webp", [Path("C:/x/a.png")])
-    assert submitted[0][2] == {"quality": 60}
+    assert submitted[0][2] == {"quality": 60, "dpi": 150}
 
 
 def test_an_op_that_needs_a_dialog_is_not_run_blindly(
