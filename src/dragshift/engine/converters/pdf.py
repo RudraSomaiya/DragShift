@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 from dragshift.engine.converters.images import QUALITY
 from dragshift.engine.kinds import Kind
 from dragshift.engine.registry import op
+from dragshift.engine.worker import new_folder
 
 if TYPE_CHECKING:
     from pymupdf import Document, Page, Pixmap
@@ -82,22 +83,6 @@ def _render(page: "Page", dpi: int) -> "Pixmap":
 
 
 # --- writing ---------------------------------------------------------------------------------
-def _pages_folder(src: Path, ctx: "JobContext") -> Path:
-    """Create ``<stem> pages`` next to ``src``, or ``<stem> pages (2)``, … if it exists, so new
-    pages never mix with old ones. ``mkdir`` is atomic, so two jobs never share a folder."""
-    base = src.with_name(f"{src.stem} pages")
-    n = 1
-    while True:
-        folder = base if n < 2 else base.with_name(f"{base.name} ({n})")
-        try:
-            folder.mkdir()
-        except FileExistsError:
-            n += 1
-            continue
-        ctx.made_dirs.append(folder)  # removed again if the job fails or is cancelled
-        return folder
-
-
 def _rasterise(paths: list[Path], params: dict, ctx: "JobContext", ext: str) -> list[Path]:
     quality = int(params.get("quality", QUALITY))
     outputs = []
@@ -106,7 +91,7 @@ def _rasterise(paths: list[Path], params: dict, ctx: "JobContext", ext: str) -> 
             if doc.page_count == 1:
                 folder, labels = None, [None]
             else:
-                folder = _pages_folder(src, ctx)
+                folder = new_folder(src.with_name(f"{src.stem} pages"), ctx)
                 width = max(3, len(str(doc.page_count)))
                 labels = [f"{i + 1:0{width}d}" for i in range(doc.page_count)]
             for i in _pages(doc, ctx):
