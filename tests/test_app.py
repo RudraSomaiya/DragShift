@@ -8,6 +8,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from PySide6.QtCore import QPoint
 from pytestqt.qtbot import QtBot
 
 from dragshift import app as app_module
@@ -90,6 +91,33 @@ def test_the_real_pipeline_converts_and_leaves_the_source_alone(
     assert not list(tmp_path.glob("*.part"))
 
 
+def test_a_quick_launch_tap_opens_that_launcher_wheel(
+    the_app: App, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    opened: list[tuple] = []
+    monkeypatch.setattr(the_app.launcher, "open", lambda kind, at: opened.append((kind, at)))
+    the_app.gesture.quick_launch.emit("sites", QPoint(10, 20))
+    assert opened == [("sites", QPoint(10, 20))]
+
+
+def test_a_picked_slot_is_launched(the_app: App, monkeypatch: pytest.MonkeyPatch) -> None:
+    from dragshift import app as app_module
+    from dragshift.config import Config, Launcher, LauncherApp, LauncherSite
+
+    config = Config(
+        launcher=Launcher(
+            apps=(LauncherApp(target="C:/a.exe"),), sites=(LauncherSite(url="x.com"),)
+        )
+    )
+    monkeypatch.setattr(type(the_app.store), "config", property(lambda _self: config))
+    launched: list = []
+    monkeypatch.setattr(app_module.apps, "launch_app", lambda s: launched.append(s.target))
+    monkeypatch.setattr(app_module.sites, "launch_site", lambda s: launched.append(s.url))
+    the_app.launcher.picked.emit("apps", 0)
+    the_app.launcher.picked.emit("sites", 0)
+    assert launched == ["C:/a.exe", "x.com"]
+
+
 def test_hooks_are_not_started_by_building_the_app(the_app: App) -> None:
     assert not the_app.hooks.is_installed()
     the_app.shutdown()  # safe when nothing was started
@@ -117,3 +145,20 @@ def test_help_does_not_start_the_app(capsys: pytest.CaptureFixture[str]) -> None
         main(["--help"])
     assert "dragshift" in capsys.readouterr().out
     assert app_module.run  # imported lazily, but importable
+
+
+def test_taps_with_a_launcher_open_swap_or_close_it(
+    the_app: App, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[tuple] = []
+    visible = [False]
+    monkeypatch.setattr(the_app.launcher, "isVisible", lambda: visible[0])
+    monkeypatch.setattr(type(the_app.launcher), "kind", property(lambda _self: "apps"))
+    monkeypatch.setattr(the_app.launcher, "open", lambda kind, at: calls.append(("open", kind)))
+    monkeypatch.setattr(the_app.launcher, "swap", lambda kind: calls.append(("swap", kind)))
+    monkeypatch.setattr(the_app.launcher, "close", lambda: calls.append(("close",)))
+    the_app.on_quick_launch("apps", QPoint())
+    visible[0] = True
+    the_app.on_quick_launch("sites", QPoint())  # the other key: swap in place
+    the_app.on_quick_launch("apps", QPoint())  # the open wheel's own key: close
+    assert calls == [("open", "apps"), ("swap", "sites"), ("close",)]

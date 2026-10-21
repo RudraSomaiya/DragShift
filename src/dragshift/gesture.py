@@ -99,6 +99,7 @@ class GestureController(QObject):
         selection: Callable[[int, str], list[Path]] = selected_paths,
         cursor_pos: Callable[[], QPoint] = QCursor.pos,
         context: ContextProbe | None = None,
+        launcher_open: Callable[[], bool] = lambda: False,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
@@ -115,6 +116,7 @@ class GestureController(QObject):
         self._kind_for_modifier: dict[str, Wheel] = {}
         self._paused = False
         self._context: ContextProbe = context or Win32Context()
+        self._launcher_open = launcher_open
         self._config = Config()
         self._launch_for_modifier: dict[str, str] = {}  # modifier name -> "apps" | "sites"
         self._tap = (0, 0)  # (vk, key-down t_ns) while TAP_PENDING
@@ -280,7 +282,9 @@ class GestureController(QObject):
             return
         self._first_tap = None
         kind = self._launch_for_modifier[MODIFIER_NAMES[vk]]
-        gate = failed_gate(self._context, self._config)
+        # With a launcher wheel open the user is already in Quick Launch, and that wheel holds
+        # the focus, so G-a would fail: the tap goes straight through, to swap or close it.
+        gate = None if self._launcher_open() else failed_gate(self._context, self._config)
         if gate is not None:
             log.debug("%s tap ignored: gate %s failed", kind, gate)
             return

@@ -19,7 +19,10 @@ from dragshift.config import Config, ConfigStore
 from dragshift.engine import registry
 from dragshift.engine.jobs import JobManager, JobResult
 from dragshift.gesture import GestureController
+from dragshift.launcher import apps, sites
+from dragshift.launcher.sites import FaviconCache
 from dragshift.platform.hooks import HookInstallError, HookThread
+from dragshift.ui.launcher_wheel import LauncherWheel
 from dragshift.ui.wheel import WheelWindow
 
 __all__ = ["App", "build", "run"]
@@ -35,21 +38,34 @@ class App(QObject):
         self.store = store or ConfigStore()
         self.jobs = JobManager(self)
         self.wheel = WheelWindow()
-        self.gesture = GestureController(self.wheel, self.store.config, parent=self)
+        icons = self.store.path.parent / "icons"  # FR-3.4: %APPDATA%\DragShift\icons
+        self.launcher = LauncherWheel(icons)
+        self.favicons = FaviconCache(icons, self)
+        self.gesture = GestureController(
+            self.wheel, self.store.config, launcher_open=self.launcher.isVisible, parent=self
+        )
         self.hooks = HookThread(self)
-        self.wheel.set_appearance(self.store.config.appearance)
 
-        self.hooks.raw_input.connect(self.gesture.on_input, Qt.ConnectionType.QueuedConnection)
+        queued = Qt.ConnectionType.QueuedConnection
+        self.hooks.raw_input.connect(self.gesture.on_input, queued)
+        self.hooks.raw_input.connect(self.launcher.on_input, queued)
         self.hooks.reinstalled.connect(self.gesture.on_hooks_reinstalled)
         self.store.changed.connect(self.gesture.apply_config)
         self.store.changed.connect(self.on_config_changed)
         self.wheel.dropped.connect(self.on_dropped)
         self.jobs.finished.connect(self.on_finished)
         self.gesture.quick_launch.connect(self.on_quick_launch)
+        self.launcher.picked.connect(self.on_picked)
+        self.launcher.add_requested.connect(self.on_add_requested)
+        self.favicons.updated.connect(self.launcher.reload_icons)
+        self.on_config_changed(self.store.config)
 
     @Slot(object)
     def on_config_changed(self, config: Config) -> None:
         self.wheel.set_appearance(config.appearance)  # theme, accent, reduced motion (§8.2)
+        self.launcher.set_appearance(config.appearance)
+        self.launcher.set_launcher(config.launcher)
+        self.favicons.ensure(config.launcher.sites)  # once per newly added site (FR-3.4)
 
     @Slot(str, object)
     def on_dropped(self, op_id: str, paths: list[Path]) -> None:
@@ -63,8 +79,33 @@ class App(QObject):
 
     @Slot(str, QPoint)
     def on_quick_launch(self, kind: str, at: QPoint) -> None:
-        """A tap passed every gate (FR-3.1, FR-3.2). The launcher wheels come with DS-19."""
-        log.info("Quick Launch: %s wheel at (%d, %d)", kind, at.x(), at.y())
+        """A tap passed every gate (FR-3.1, FR-3.2): open that launcher wheel (FR-3.5). With one
+        already open, the other key swaps it in place and the same key closes it."""
+        if not self.launcher.isVisible():
+            self.launcher.open(kind, at)
+        elif kind == self.launcher.kind:
+            self.launcher.close()
+        else:
+            self.launcher.swap(kind)
+
+    @Slot(str, int)
+    def on_picked(self, kind: str, index: int) -> None:
+        launcher = self.store.config.launcher
+        if kind == "apps":
+            slot = launcher.apps[index]
+            name, error = apps.label_of(slot), apps.launch_app(slot)
+        else:
+            slot = launcher.sites[index]
+            name, error = sites.label_of(slot), sites.launch_site(slot)
+        if error:
+            log.warning("could not open %s: %s", name, error)  # a toast once DS-18 lands
+        else:
+            log.info("Quick Launch: opened %s", name)
+
+    @Slot(str, int)
+    def on_add_requested(self, kind: str, index: int) -> None:
+        # FR-3.6: Settings > Launcher comes with DS-25.
+        log.info("empty %s slot %d: add it in config.json until Settings exists", kind, index + 1)
 
     @Slot(str, object)
     def on_finished(self, _job_id: str, result: JobResult) -> None:
@@ -76,6 +117,7 @@ class App(QObject):
     def shutdown(self) -> None:
         self.hooks.stop_hooks()
         self.wheel.close()
+        self.launcher.close()
         self.jobs.shutdown()
 
 

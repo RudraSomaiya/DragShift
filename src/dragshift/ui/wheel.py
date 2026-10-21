@@ -297,12 +297,16 @@ class WheelWindow(QWidget):
         self._thumb = self._thumbs.get(_icon_key(files[0]), QPixmap()) if files else QPixmap()
         self._relayout()
 
-    def _relayout(self) -> None:
-        """Rebuild the petals for the current wheel and files. Resets hover and the ring."""
+    def _build_layout(self) -> WheelLayout:
+        """The petals for the current wheel and files. LauncherWheel overrides this (DS-19)."""
         ops = ops_for(self._files, self._wheel) if self._files else []
         key = input_kind(self._files)
         ops = order_ops(ops, self._pinned.get(key, ()), self._usage.get(key, {}))
-        self._layout = build_layout(ops, enabled=not self._unsupported)
+        return build_layout(ops, enabled=not self._unsupported)
+
+    def _relayout(self) -> None:
+        """Rebuild the petals for the current wheel and files. Resets hover and the ring."""
+        self._layout = self._build_layout()
 
         main, ring = self._layout.petals, self._layout.ring
         self._n_main = len(main)
