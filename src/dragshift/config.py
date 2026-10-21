@@ -33,6 +33,7 @@ __all__ = [
     "load_config",
     "parse_config",
     "save_config",
+    "write_json",
 ]
 
 log = logging.getLogger(__name__)
@@ -221,15 +222,18 @@ def default_config_path() -> Path:
     return Path(os.environ["APPDATA"]) / "DragShift" / "config.json"
 
 
-def save_config(config: Config, path: Path | None = None) -> None:
-    """Write the config atomically (``*.part``, then rename)."""
-    path = path or default_config_path()
+def write_json(path: Path, data: Any) -> None:
+    """Write ``data`` as indented UTF-8 JSON atomically (``*.part``, then rename). Used for
+    config.json and history.json."""
     path.parent.mkdir(parents=True, exist_ok=True)
     part = path.with_name(path.name + ".part")
-    part.write_text(
-        json.dumps(_dump(config), indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
-    )
+    part.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     os.replace(part, path)  # atomic on the same volume
+
+
+def save_config(config: Config, path: Path | None = None) -> None:
+    """Write the config atomically (``*.part``, then rename)."""
+    write_json(path or default_config_path(), _dump(config))
 
 
 def load_config(path: Path | None = None) -> Config:

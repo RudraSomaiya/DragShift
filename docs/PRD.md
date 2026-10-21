@@ -355,6 +355,8 @@ The desktop behind a wheel is effectively static while the wheel is open, so we 
 
 Dependency groups in `pyproject.toml`: the main `dependencies` hold everything above. `[dependency-groups] dev` holds ruff, pytest, pytest-qt, and pre-commit.
 
+`send2trash` is the one engine-row library the UI process uses: Undo (FR-5.6) calls it on the Qt thread, so Undo never waits for a worker pool to start. It is a thin wrapper over the shell's `IFileOperation`, imported only when Undo runs (DS-18).
+
 ### 9.2 Process model
 ```
 dragshift  (UI process — always running, lean)
@@ -391,9 +393,11 @@ src/dragshift/
     screen.py         # BitBlt snapshot (no CAPTUREBLT), monitor work areas
     dwm.py            # backdrop, dark mode, corners, accent colour, light/dark detection
     autostart.py      # HKCU Run key
+    files.py          # open a file; show it selected in Explorer (toast Open / Show)
     single_instance.py
   ui/
     theme.py  glass.py  wheel.py  wheel_geometry.py  wheel_model.py  launcher_wheel.py  toast.py  tray.py
+    job_toasts.py     # job events → progress / result / error toasts and their buttons
     dialogs/ base_glass.py  crop.py  add_bg.py  compress.py  pages.py  settings.py
   engine/
     kinds.py          # Kind enum + extension → Kind detection
@@ -446,18 +450,32 @@ class JobContext:
         # applies FR-5.1..5.3 naming, returns a *.part path; JobManager renames on success
     def progress(self, fraction: float, text: str = "") -> None: ...
     def cancelled(self) -> bool: ...
+    def redirect(self, path: Path) -> Path: ...
+        # FR-5.3: the same name in Downloads; any op writing outside output_path calls it on PermissionError
 
 @dataclass
 class JobResult:
     op_id: str; inputs: list[Path]; outputs: list[Path]; ok: bool; message: str; undo: dict
+    cancelled: bool = False   # cancelled jobs get no toast and no history entry
+    # message: the failure, or a note on a successful job (it went to Downloads, FR-5.3)
+
+def apply_undo(undo: dict) -> list[Path]: ...   # FR-5.6: reverses JobResult.undo; returns outputs kept because they changed
 
 class JobManager(QObject):
     progressed = Signal(str, float, str)   # job_id, fraction, text
     finished   = Signal(str, object)       # job_id, JobResult
     def submit(self, op_id: str, paths: list[Path], params: dict | None = None) -> str: ...   # returns job_id
     def cancel(self, job_id: str) -> None: ...
-    def undo(self, job_id: str) -> None: ...
+
+# history.py — the one place a job is undone, from its toast or the tray (FR-5.6, FR-5.7)
+class History(QObject):
+    changed = Signal()
+    entries: tuple[HistoryEntry, ...]           # newest first, at most 20
+    usage: Mapping[str, Mapping[str, int]]      # input kind -> op id -> successful runs (FR-2.2)
+    def record(self, job_id: str, result: JobResult) -> None: ...
+    def undo(self, job_id: str) -> list[Path]: ...   # once per job; KeyError after that
 ```
+DS-18 moved Undo from `JobManager.undo(job_id)` to `History.undo(job_id)`. History outlives the session and knows whether a job was already undone, so a job can be undone only once, whether from its toast or from the tray.
 `ui/wheel.py` exposes `WheelWindow.open(kind: Wheel, at: QPoint, prefill: list[Path])`, `.swap(kind)`, `.close()`, and the signal `dropped(op_id: str, paths: list[Path])`. It also exposes `closed()` (emitted after any close, including a drop anywhere, FR-1.9, so `gesture.py` can go back to IDLE), `set_ordering(pinned, usage)` (FR-2.2: config pins and `history.json` usage counts, applied the next time a wheel opens), and `set_appearance(appearance)` (§8.2, NFR-8: the config's `appearance` section, resolved against the Windows settings each time a wheel opens). Wheel geometry and the petal model live in `ui/wheel_geometry.py` and `ui/wheel_model.py`.
 `gesture.py` connects `dropped` → (open a dialog if `op.dialog`) → `JobManager.submit`.
 
@@ -530,10 +548,11 @@ LAUNCHER_OPEN ──click / 1-8 / Esc / outside click / 10 s──► IDLE
 ### 10.2 `%APPDATA%\DragShift\history.json`
 ```json
 { "jobs":  [ { "id": "…", "op": "convert.image.png", "inputs": ["…"], "outputs": ["…"], "ok": true,
-               "message": "", "undo": {"type": "trash", "paths": ["…"]}, "ts": "2026-10-21T10:02:11" } ],
+               "message": "", "undo": {"type": "trash", "paths": ["…"], "stamps": [[1234, 1729504931000000000]], "dirs": ["…"]},
+               "ts": "2026-10-21T10:02:11", "undone": false } ],
   "usage": { "image": { "convert.image.png": 12, "tools.image.compress": 4 } } }
 ```
-It keeps at most 20 jobs (FIFO) and writes atomically.
+It keeps at most 20 jobs (FIFO), newest first, and writes atomically. Cancelled jobs are not kept. `undo.stamps` holds `[size, mtime_ns]` per path, taken when the job finished. Undo keeps any output whose stamp no longer matches, because it is no longer the file the job wrote. `undo.dirs` (optional) lists the output folders the job itself made, such as `<stem> pages`, but not parents created on the way, such as a missing Downloads. Undo removes them once they are empty. Undo refuses outputs on network and removable drives: there is no Recycle Bin there, and the shell would delete them for good without asking. `undone` is set after an Undo, so a job is undone only once. `usage` counts successful jobs whose inputs all share one kind (the wheel's ordering key). An unreadable file is moved to `history.bad.json`.
 
 ---
 

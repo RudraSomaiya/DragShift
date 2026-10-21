@@ -5,10 +5,12 @@ The public home of ``JobContext`` is ``dragshift.engine.jobs`` (PRD §9.4), whic
 """
 
 import importlib
+import os
 from pathlib import Path
 from typing import Any
 
 PART = ".part"
+CANCELLED = "Cancelled"  # the message of a cancelled job
 
 # This worker process's progress queue, set once by init_worker() when the pool starts it. It is
 # a multiprocessing.SimpleQueue: put() writes straight into the pipe (no feeder thread), so a
@@ -36,10 +38,23 @@ def free_path(path: Path) -> Path:
     return numbered(path, n)
 
 
+def downloads_dir() -> Path:
+    """FR-5.3: where outputs go when the source folder cannot be written to."""
+    return Path(os.environ.get("USERPROFILE") or Path.home(), "Downloads")
+
+
 def new_folder(base: Path, ctx: "JobContext") -> Path:
     """Create the output folder ``base``, or ``base (2)``, … if that exists, so new outputs never
     mix with old files. ``mkdir`` is atomic, so two jobs never share a folder. A failed or
-    cancelled job removes it again while it is empty."""
+    cancelled job removes it again while it is empty. If ``base``'s folder cannot be written
+    to, the folder is made in Downloads instead (FR-5.3)."""
+    try:
+        return _new_folder(base, ctx)
+    except PermissionError:
+        return _new_folder(ctx.redirect(base), ctx)
+
+
+def _new_folder(base: Path, ctx: "JobContext") -> Path:
     n = 1
     while True:
         # Not numbered(): a folder name has no extension ("v1.2 report pages").
@@ -50,6 +65,7 @@ def new_folder(base: Path, ctx: "JobContext") -> Path:
             n += 1
             continue
         ctx.made_dirs.append(folder)
+        ctx.out_dirs.append(folder)
         return folder
 
 
@@ -82,7 +98,11 @@ class JobContext:
         self._cancel = cancel_flags if cancel_flags is not None else {}  # job_id in → cancelled
         self._slot = (0, 1)  # (file group index, group count) for overall progress
         self.reserved: list[Path] = []  # .part files this job created
-        self.made_dirs: list[Path] = []  # output folders this job created
+        self.made_dirs: list[Path] = []  # every folder this job created, for failure cleanup
+        # The job's own output folders (new_folder: "<stem> pages"), not parents made on the
+        # way such as a missing Downloads: these are what Undo removes and Open shows.
+        self.out_dirs: list[Path] = []
+        self.redirected = False  # an output went to Downloads (FR-5.3)
 
     def output_path(
         self, src: Path, *, ext: str, label: str | None = None, folder: Path | None = None
@@ -91,12 +111,30 @@ class JobContext:
 
         The name never collides with an existing output or another job's ``.part``. Pass the
         format to the writer explicitly, since the ``.part`` suffix hides the real extension.
+        If the folder cannot be written to, the file is reserved in Downloads (FR-5.3).
         """
-        # The FR-5.3 Downloads fallback for read-only folders lands in DS-18.
         out_dir = folder if folder is not None else src.parent
-        self._make_dirs(out_dir)
         stem = src.name if src.is_dir() else src.stem
-        base = out_dir / f"{stem}{f' {label}' if label else ''}.{ext.lstrip('.')}"
+        name = f"{stem}{f' {label}' if label else ''}.{ext.lstrip('.')}"
+        try:
+            return self._reserve(out_dir / name)
+        except PermissionError:
+            return self._reserve(self.redirect(out_dir / name))
+
+    def redirect(self, path: Path) -> Path:
+        """FR-5.3: where ``path`` goes after its folder refused a write: the same name in
+        Downloads, which is created if missing. Raises PermissionError if ``path`` is in
+        Downloads already. Every way of writing an output calls this on PermissionError."""
+        fallback = downloads_dir() / path.name
+        if path.parent == fallback.parent:
+            raise PermissionError(f"cannot write to {path.parent}")
+        self.redirected = True
+        self._make_dirs(fallback.parent)
+        return fallback
+
+    def _reserve(self, base: Path) -> Path:
+        """Create the first free ``base``, ``base (2)``, … as an empty ``.part`` file."""
+        self._make_dirs(base.parent)
         n = 1
         while True:
             final = numbered(base, n)
@@ -109,9 +147,14 @@ class JobContext:
             except FileExistsError:
                 n += 1
                 continue
+            except PermissionError:
+                if part.exists():  # a folder by that name, not a read-only folder
+                    n += 1
+                    continue
+                raise
             except FileNotFoundError:
                 # Another job's failure cleanup removed the shared, empty folder: recreate it.
-                self._make_dirs(out_dir)
+                self._make_dirs(base.parent)
                 continue
             self.reserved.append(part)
             return part
@@ -189,7 +232,7 @@ def run_job(func: str, groups: list[list[Path]], params: dict, ctx: JobContext) 
         raise
     if ctx.cancelled():
         ctx.discard(ctx.reserved)
-        return {"ok": False, "outputs": [], "message": "Cancelled"}
+        return {"ok": False, "outputs": [], "message": CANCELLED, "cancelled": True}
     if not errors:
         message = ""
     elif len(groups) == 1:
@@ -197,4 +240,12 @@ def run_job(func: str, groups: list[list[Path]], params: dict, ctx: JobContext) 
     else:
         more = f" (+{len(errors) - 1} more)" if len(errors) > 1 else ""
         message = f"{len(groups) - len(errors)} of {len(groups)} done; {errors[0]}{more}"
-    return {"ok": not errors, "outputs": outputs, "message": message}
+    result: dict[str, Any] = {"ok": not errors, "outputs": outputs, "message": message}
+    # Optional keys: the output folders still there (Undo removes them once empty, FR-5.6) and
+    # whether anything went to Downloads (FR-5.3).
+    dirs = [d for d in ctx.out_dirs if d.is_dir()]
+    if dirs:
+        result["dirs"] = dirs
+    if ctx.redirected and outputs:
+        result["redirected"] = True
+    return result

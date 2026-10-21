@@ -5,7 +5,14 @@ from pathlib import Path
 
 import pytest
 
-from dragshift.engine.worker import CancelDir, JobContext, final_path, free_path, run_job
+from dragshift.engine.worker import (
+    CancelDir,
+    JobContext,
+    final_path,
+    free_path,
+    new_folder,
+    run_job,
+)
 
 
 def src_file(tmp_path: Path, name: str = "Page 001.png") -> Path:
@@ -47,6 +54,88 @@ class TestOutputPath:
         assert part.name == "v1.2 release.zip.part"
 
 
+class TestDownloadsFallback:
+    """FR-5.3: a source folder that cannot be written to sends the output to Downloads."""
+
+    def test_output_goes_to_downloads(self, tmp_path, make_read_only, downloads) -> None:
+        locked = tmp_path / "locked"
+        locked.mkdir()
+        src = src_file(locked)
+        make_read_only(locked)
+        ctx = JobContext("j")
+        part = ctx.output_path(src, ext="jpg")
+        assert part == downloads / "Page 001.jpg.part"
+        assert ctx.redirected
+        assert sorted(p.name for p in src.parent.iterdir()) == ["Page 001.png"]
+
+    def test_downloads_names_never_collide(self, tmp_path, make_read_only, downloads) -> None:
+        locked = tmp_path / "locked"
+        locked.mkdir()
+        src = src_file(locked)
+        make_read_only(locked)
+        downloads.mkdir()
+        (downloads / "Page 001.jpg").write_bytes(b"older download")
+        part = JobContext("j").output_path(src, ext="jpg")
+        assert part.name == "Page 001 (2).jpg.part"
+        assert (downloads / "Page 001.jpg").read_bytes() == b"older download"
+
+    def test_writable_folder_is_not_redirected(self, tmp_path, downloads) -> None:
+        ctx = JobContext("j")
+        assert ctx.output_path(src_file(tmp_path), ext="jpg").parent == tmp_path
+        assert not ctx.redirected and not downloads.exists()
+
+    def test_a_folder_named_like_the_part_is_skipped_not_redirected(
+        self, tmp_path, downloads
+    ) -> None:
+        (tmp_path / "Page 001.jpg.part").mkdir()  # opening it as a file is "access denied"
+        ctx = JobContext("j")
+        part = ctx.output_path(src_file(tmp_path), ext="jpg")
+        assert part == tmp_path / "Page 001 (2).jpg.part"
+        assert not ctx.redirected
+
+    def test_new_folder_goes_to_downloads(self, tmp_path, make_read_only, downloads) -> None:
+        locked = tmp_path / "locked"
+        locked.mkdir()
+        src = src_file(locked, "doc.pdf")
+        make_read_only(locked)
+        ctx = JobContext("j")
+        folder = new_folder(src.with_name("doc pages"), ctx)
+        assert folder == downloads / "doc pages"
+        assert ctx.redirected and folder in ctx.made_dirs
+        part = ctx.output_path(src, ext="png", label="001", folder=folder)
+        assert part.parent == folder
+
+    def test_run_job_reports_redirect_and_folders(
+        self, tmp_path, make_read_only, downloads
+    ) -> None:
+        locked = tmp_path / "locked"
+        locked.mkdir()
+        src = src_file(locked, "a.bin")
+        make_read_only(locked)
+        res = run_job(f"{__name__}:write_copy", [[src]], {}, JobContext("j", queue.Queue()))
+        assert res["ok"] and res["redirected"]
+        assert res["outputs"] == [downloads / "a.txt.part"]
+        # Downloads did not exist and this job made it, but it is not the job's output folder:
+        # Undo must not remove it and Open must not show it.
+        assert "dirs" not in res
+
+    def test_redirect_refuses_a_read_only_downloads(self, tmp_path, downloads) -> None:
+        with pytest.raises(PermissionError):
+            JobContext("j").redirect(downloads / "a.jpg")
+
+
+def test_run_job_lists_the_output_folders_it_made(tmp_path: Path) -> None:
+    src = src_file(tmp_path, "a.bin")
+    res = run_job(f"{__name__}:write_pages", [[src]], {}, JobContext("j", queue.Queue()))
+    assert res["dirs"] == [tmp_path / "a pages"]
+    assert "redirected" not in res
+
+
+def test_run_job_leaves_out_the_optional_keys_when_unused(tmp_path: Path) -> None:
+    res = run_job(f"{__name__}:write_copy", [[src_file(tmp_path)]], {}, JobContext("j"))
+    assert set(res) == {"ok", "outputs", "message"}
+
+
 def test_free_path(tmp_path: Path) -> None:
     target = tmp_path / "a.jpg"
     assert free_path(target) == target
@@ -64,6 +153,13 @@ def write_copy(paths, params, ctx):
         out.write_bytes(p.read_bytes())
         outs.append(out)
     return outs
+
+
+def write_pages(paths, params, ctx):
+    folder = new_folder(paths[0].with_name(f"{paths[0].stem} pages"), ctx)
+    out = ctx.output_path(paths[0], ext="txt", label="001", folder=folder)
+    out.write_bytes(b"page")
+    return [out]
 
 
 def write_then_fail(paths, params, ctx):
@@ -119,7 +215,7 @@ def test_run_job_failure_removes_parts_and_keeps_source(tmp_path: Path) -> None:
 def test_run_job_cancelled_before_start_runs_nothing(tmp_path: Path) -> None:
     src = src_file(tmp_path)
     res = run_job(fn("write_then_fail"), [[src]], {}, JobContext("j", cancel_flags={"j": True}))
-    assert res == {"ok": False, "outputs": [], "message": "Cancelled"}
+    assert res == {"ok": False, "outputs": [], "message": "Cancelled", "cancelled": True}
     assert list(tmp_path.iterdir()) == [src]
 
 

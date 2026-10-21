@@ -251,7 +251,7 @@ def test_cancel_kills_ffmpeg_and_deletes_the_partial_output(
         {},
         JobContext("t", queue, flags),
     )
-    assert result == {"ok": False, "outputs": [], "message": "Cancelled"}
+    assert result == {"ok": False, "outputs": [], "message": "Cancelled", "cancelled": True}
     assert time.monotonic() - flags.at < 2  # cancel acts within a few polls
     assert max(queue.reports) < 0.99  # it really was stopped part-way
     (proc,) = [p for p in procs if "-progress" in p.args]  # not the probe

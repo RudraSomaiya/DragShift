@@ -91,6 +91,61 @@ def test_the_real_pipeline_converts_and_leaves_the_source_alone(
     assert (tmp_path / "photo.jpg").is_file()
     assert (sha(source), source.stat().st_mtime_ns) == before  # not moved, rewritten or touched
     assert not list(tmp_path.glob("*.part"))
+    toast = the_app.toasts.stack.get(the_app.history.entries[0].id)
+    assert toast.content.title == "photo.jpg"  # FR-5.5
+    assert toast.content.buttons == ("Open", "Show", "Undo")
+
+
+def test_a_drop_starts_the_progress_toast_clock(
+    the_app: App, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(the_app.jobs, "submit", lambda *a, **k: "job-1")
+    started: list[tuple] = []
+    monkeypatch.setattr(the_app.toasts, "started", lambda *a: started.append(a))
+    files = [Path("C:/x/a.png")]
+    the_app.wheel.dropped.emit("convert.image.jpg", files)
+    assert started == [("job-1", "convert.image.jpg", files)]
+
+
+def test_a_finished_job_is_recorded_toasted_and_reorders_the_petals(
+    the_app: App, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    orderings: list[tuple] = []
+    monkeypatch.setattr(the_app.wheel, "set_ordering", lambda *a: orderings.append(a))
+    shown: list[tuple] = []
+    monkeypatch.setattr(the_app.toasts, "finished", lambda *a: shown.append(a))
+    result = JobResult("convert.image.webp", [Path("C:/x/a.png")], [], True, "", {})
+    the_app.jobs.finished.emit("job-1", result)
+    assert [e.id for e in the_app.history.entries] == ["job-1"]
+    assert (tmp_path / "history.json").exists()  # next to config.json (§10.2)
+    assert shown == [("job-1", result)]
+    assert orderings[-1] == ({}, {"image": {"convert.image.webp": 1}})  # FR-2.2
+
+
+def test_pinned_petals_from_the_config_reach_the_wheel(
+    the_app: App, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    orderings: list[tuple] = []
+    monkeypatch.setattr(the_app.wheel, "set_ordering", lambda *a: orderings.append(a))
+    wheels = dataclasses.replace(
+        the_app.store.config.wheels, pinned={"image": ("convert.image.png",)}
+    )
+    the_app.store.update(dataclasses.replace(the_app.store.config, wheels=wheels))
+    assert orderings[-1][0] == {"image": ("convert.image.png",)}
+
+
+def test_a_quick_launch_failure_shows_a_toast(
+    the_app: App, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dragshift.config import Config, Launcher, LauncherApp
+
+    config = Config(launcher=Launcher(apps=(LauncherApp(label="Tool", target="C:/gone.exe"),)))
+    monkeypatch.setattr(type(the_app.store), "config", property(lambda _self: config))
+    monkeypatch.setattr(app_module.apps, "launch_app", lambda _slot: "file not found")
+    errors: list[tuple] = []
+    monkeypatch.setattr(the_app.toasts, "error", lambda *a: errors.append(a))
+    the_app.launcher.picked.emit("apps", 0)
+    assert errors == [("Couldn't open Tool", "file not found")]
 
 
 def test_a_quick_launch_tap_opens_that_launcher_wheel(

@@ -120,4 +120,6 @@ def run_op(found: Op, files: list[Path], params: dict) -> int:
     if not result.ok:
         _err(result.message)
         return FAILED
+    if result.message:  # a note on a successful job, e.g. it went to Downloads (FR-5.3)
+        _err(result.message)
     return OK
