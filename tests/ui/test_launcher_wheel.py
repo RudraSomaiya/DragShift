@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 from PySide6.QtCore import QPoint, QPointF, Qt
-from PySide6.QtGui import QImage
+from PySide6.QtGui import QImage, QPixmap
 from pytestqt.qtbot import QtBot
 
 from dragshift.config import Appearance, Launcher, LauncherApp, LauncherSite
@@ -210,3 +210,33 @@ def test_closed_wheels_ignore_hook_input(wheel: LauncherWheel) -> None:
 def test_slot_ids() -> None:
     assert lw.slot_of("apps:3") == ("apps", 3, False)
     assert lw.slot_of("sites:7:add") == ("sites", 7, True)
+
+
+# --- swapping and icons ----------------------------------------------------------------------
+def test_swap_shows_the_other_wheel_in_place(wheel: LauncherWheel) -> None:
+    wheel.open("apps", AT)
+    where = wheel.geometry()
+    wheel.swap("sites")
+    assert wheel.kind == "sites"
+    assert labels(wheel)[:2] == ["github.com", "Mail"]
+    assert wheel.geometry() == where
+
+
+def test_dark_icons_get_a_light_plate_on_dark_glass(qapp: object) -> None:
+    black = QImage(16, 16, QImage.Format.Format_ARGB32)
+    black.fill(Qt.GlobalColor.black)
+    white = QImage(16, 16, QImage.Format.Format_ARGB32)
+    white.fill(Qt.GlobalColor.white)
+    assert lw._is_dark(QPixmap.fromImage(black))
+    assert not lw._is_dark(QPixmap.fromImage(white))
+    plated = lw._on_plate(QPixmap.fromImage(black)).toImage()
+    assert plated.pixelColor(4, 4).lightness() > 200  # the tile's corner area is light
+
+
+def test_the_shell_draws_real_app_icons() -> None:
+    from dragshift.platform.shell_icon import shell_icon
+
+    w, h, bgra = shell_icon(r"C:\Windows\explorer.exe", 48)
+    assert w >= 32 and h >= 32 and len(bgra) == w * h * 4
+    assert any(bgra[i + 3] for i in range(0, len(bgra), 4))  # not all transparent
+    assert shell_icon("C:\no\\such\file.exe", 48) is None

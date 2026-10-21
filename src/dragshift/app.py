@@ -38,11 +38,13 @@ class App(QObject):
         self.store = store or ConfigStore()
         self.jobs = JobManager(self)
         self.wheel = WheelWindow()
-        self.gesture = GestureController(self.wheel, self.store.config, parent=self)
-        self.hooks = HookThread(self)
         icons = self.store.path.parent / "icons"  # FR-3.4: %APPDATA%\DragShift\icons
         self.launcher = LauncherWheel(icons)
         self.favicons = FaviconCache(icons, self)
+        self.gesture = GestureController(
+            self.wheel, self.store.config, launcher_open=self.launcher.isVisible, parent=self
+        )
+        self.hooks = HookThread(self)
 
         queued = Qt.ConnectionType.QueuedConnection
         self.hooks.raw_input.connect(self.gesture.on_input, queued)
@@ -77,8 +79,14 @@ class App(QObject):
 
     @Slot(str, QPoint)
     def on_quick_launch(self, kind: str, at: QPoint) -> None:
-        """A tap passed every gate (FR-3.1, FR-3.2): open that launcher wheel (FR-3.5)."""
-        self.launcher.open(kind, at)
+        """A tap passed every gate (FR-3.1, FR-3.2): open that launcher wheel (FR-3.5). With one
+        already open, the other key swaps it in place and the same key closes it."""
+        if not self.launcher.isVisible():
+            self.launcher.open(kind, at)
+        elif kind == self.launcher.kind:
+            self.launcher.close()
+        else:
+            self.launcher.swap(kind)
 
     @Slot(str, int)
     def on_picked(self, kind: str, index: int) -> None:

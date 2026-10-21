@@ -145,3 +145,20 @@ def test_help_does_not_start_the_app(capsys: pytest.CaptureFixture[str]) -> None
         main(["--help"])
     assert "dragshift" in capsys.readouterr().out
     assert app_module.run  # imported lazily, but importable
+
+
+def test_taps_with_a_launcher_open_swap_or_close_it(
+    the_app: App, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[tuple] = []
+    visible = [False]
+    monkeypatch.setattr(the_app.launcher, "isVisible", lambda: visible[0])
+    monkeypatch.setattr(type(the_app.launcher), "kind", property(lambda _self: "apps"))
+    monkeypatch.setattr(the_app.launcher, "open", lambda kind, at: calls.append(("open", kind)))
+    monkeypatch.setattr(the_app.launcher, "swap", lambda kind: calls.append(("swap", kind)))
+    monkeypatch.setattr(the_app.launcher, "close", lambda: calls.append(("close",)))
+    the_app.on_quick_launch("apps", QPoint())
+    visible[0] = True
+    the_app.on_quick_launch("sites", QPoint())  # the other key: swap in place
+    the_app.on_quick_launch("apps", QPoint())  # the open wheel's own key: close
+    assert calls == [("open", "apps"), ("swap", "sites"), ("close",)]

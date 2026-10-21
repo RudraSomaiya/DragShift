@@ -659,3 +659,13 @@ def test_gesture_modules_import_no_engine_libraries() -> None:
     )
     out = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, check=True)
     assert out.stdout.strip() == ""
+
+
+def test_with_a_launcher_open_a_tap_skips_the_gates(qapp: object) -> None:
+    """The open launcher holds the focus, so G-a would fail; the tap must reach it to swap."""
+    rig = Rig(context=FakeContext(root=(1, "Qt6QWindowIcon")))
+    rig.tap(LCTRL)
+    assert rig.launches == []  # nothing open: the gates apply
+    rig.gc._launcher_open = lambda: True
+    rig.tap(LCTRL, at_ms=500)
+    assert [kind for kind, _ in rig.launches] == ["sites"]

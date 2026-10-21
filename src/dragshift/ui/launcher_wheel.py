@@ -19,13 +19,14 @@ from dataclasses import replace
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QFileInfo, QPoint, QPointF, QRectF, Qt, QTimer, Signal, Slot
-from PySide6.QtGui import QBrush, QCursor, QKeyEvent, QMouseEvent, QPainter, QPixmap
+from PySide6.QtGui import QBrush, QColor, QCursor, QImage, QKeyEvent, QMouseEvent, QPainter, QPixmap
 from PySide6.QtWidgets import QFileIconProvider
 
 from dragshift.config import Launcher, LauncherApp, LauncherSite
 from dragshift.launcher import apps, sites
 from dragshift.platform.foreground import bring_to_front
 from dragshift.platform.hooks import InputKind, RawInput
+from dragshift.platform.shell_icon import shell_icon
 from dragshift.ui import wheel_geometry as geo
 from dragshift.ui.theme import label_font
 from dragshift.ui.wheel import WheelWindow, _Shape
@@ -69,6 +70,49 @@ def monogram(text: str, size: int, brush_for: Callable[[QRectF], QBrush]) -> QPi
     return pm
 
 
+def _app_icon(target: str) -> QPixmap | None:
+    """The Start menu's icon for an app slot: Store apps too, at 2x for sharp high-DPI."""
+    aumid = apps.aumid_of(target)
+    name = apps.APPS_FOLDER + aumid if aumid else os.path.expandvars(target)
+    if aumid is None and not Path(name).exists():
+        return None
+    got = shell_icon(name, ICON * 2)
+    if got is not None:
+        w, h, bgra = got
+        image = QImage(bgra, w, h, w * 4, QImage.Format.Format_ARGB32_Premultiplied).copy()
+        pm = QPixmap.fromImage(image)
+        pm.setDevicePixelRatio(w / ICON)
+        return pm
+    if aumid is None:  # the shell said no: Qt's own file icon
+        return QFileIconProvider().icon(QFileInfo(name)).pixmap(ICON, ICON)
+    return None
+
+
+def _is_dark(icon: QPixmap) -> bool:
+    """Mostly dark where it is not transparent (a black logo)."""
+    small = icon.toImage().scaled(8, 8).convertToFormat(QImage.Format.Format_ARGB32)
+    seen = [
+        c for c in (small.pixelColor(x, y) for x in range(8) for y in range(8)) if c.alpha() > 128
+    ]
+    return bool(seen) and sum(c.lightnessF() for c in seen) / len(seen) < 0.3
+
+
+def _on_plate(icon: QPixmap) -> QPixmap:
+    """The icon on a light rounded tile, like a browser tab shows it."""
+    side = ICON + 4
+    pm = QPixmap(side * 2, side * 2)
+    pm.setDevicePixelRatio(2)
+    pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform)
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QColor(255, 255, 255, 225))
+    p.drawRoundedRect(QRectF(0, 0, side, side), side * 0.28, side * 0.28)
+    p.drawPixmap(QRectF(4, 4, side - 8, side - 8), icon, QRectF(icon.rect()))
+    p.end()
+    return pm
+
+
 class LauncherWheel(WheelWindow):
     picked = Signal(str, int)  # "apps" | "sites", slot index: launch it
     add_requested = Signal(str, int)  # an empty slot was picked: open Settings > Launcher
@@ -103,13 +147,18 @@ class LauncherWheel(WheelWindow):
     def set_launcher(self, launcher: Launcher) -> None:
         """The slots from the config. App icons load now, so opening the wheel stays fast."""
         self._launcher = launcher
-        provider = QFileIconProvider()
         for app in launcher.apps[:SLOTS]:
             target = app.target.strip()
-            if target and target not in self._app_icons and apps.aumid_of(target) is None:
-                path = Path(os.path.expandvars(target))
-                if path.exists():
-                    self._app_icons[target] = provider.icon(QFileInfo(str(path))).pixmap(ICON, ICON)
+            if target and target not in self._app_icons:
+                icon = _app_icon(target)
+                if icon is not None:
+                    self._app_icons[target] = icon
+
+    def swap(self, kind: str) -> None:  # type: ignore[override]
+        """Apps <-> Sites in place, with the drag wheel's cross-fade (a tap of the other key)."""
+        self._kind = kind
+        super().swap(kind)  # type: ignore[arg-type]
+        self._idle.start(INACTIVITY_MS)
 
     def reload_icons(self) -> None:
         """A favicon arrived: show it, if the Sites wheel is open."""
@@ -170,7 +219,9 @@ class LauncherWheel(WheelWindow):
             path = sites.cached_icon(slot.url, self._icons_dir)
             icon = QPixmap(str(path)) if path else None
         if icon is None or icon.isNull():
-            icon = monogram(label, ICON, self._theme.accent_brush)
+            return monogram(label, ICON, self._theme.accent_brush)
+        if self._theme.dark and _is_dark(icon):
+            return _on_plate(icon)  # GitHub's black logo would vanish on dark glass
         return icon
 
     def _shapes_for(self, petals: Sequence[Petal], r_in: float, r_out: float) -> list[_Shape]:  # type: ignore[override]
