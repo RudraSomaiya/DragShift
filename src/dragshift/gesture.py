@@ -1,14 +1,23 @@
-"""GestureController: the drag branch of the gesture state machine (PRD §9.5).
+"""GestureController: the gesture state machine (PRD §9.5).
 
+Drag branch:
     IDLE --LMB down--> PRESSED --moved past SM_CXDRAG/SM_CYDRAG--> DRAGGING
     PRESSED/DRAGGING --LMB up--> IDLE
     DRAGGING --mapped modifier key-down, and is_file_drag()--> WHEEL_OPEN(wheel)
     WHEEL_OPEN --another mapped modifier down--> WHEEL_OPEN(other wheel)         (swap, FR-1.6)
     WHEEL_OPEN --LMB up outside / Esc / 30 s / any close--> IDLE                 (FR-1.9)
 
+Tap branch (Quick Launch, FR-3.1):
+    IDLE --launch modifier down, no other key held--> TAP_PENDING(key, t0)
+    TAP_PENDING --any other key, mouse button or wheel, or auto-repeat--> IDLE
+    TAP_PENDING --the same key up within TAP_MS--> IDLE, and that is a tap:
+        single mode: if the gates pass (FR-3.2), emit quick_launch(kind, cursor)
+        double mode: the same, on a second tap starting within DOUBLE_TAP_MS of the first
+
 It consumes ``RawInput`` events from the HookThread on the Qt thread and drives a WheelWindow.
-It never inspects the desktop inside a hook callback. The tap branch (Quick Launch) comes with
-DS-15 and extends the same state enum.
+It never inspects the desktop inside a hook callback. Tap times come from the events' own hook
+time stamps, so a busy Qt thread cannot turn a quick tap into a slow one. The launcher wheel is
+DS-19; until then app.py only logs ``quick_launch``.
 
 Wiring (done in app.py): ``hooks.raw_input -> on_input``, ``hooks.reinstalled ->
 on_hooks_reinstalled``, ``store.changed -> apply_config``.
@@ -20,10 +29,11 @@ from enum import Enum, auto
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
-from PySide6.QtCore import QObject, QPoint, QTimer, Slot
+from PySide6.QtCore import QObject, QPoint, QTimer, Signal, Slot
 from PySide6.QtGui import QCursor
 
 from dragshift.config import Config
+from dragshift.platform.context_guard import ContextProbe, Win32Context, failed_gate
 from dragshift.platform.drag_detect import EXPLORER_CLASSES, Win32Probe, is_file_drag
 from dragshift.platform.hooks import InputKind, RawInput
 from dragshift.platform.shell import selected_paths
@@ -43,6 +53,8 @@ DROP_GRACE_MS = 400  # after LMB up over the wheel, wait this long for the drop 
 # orphaned and stays on screen. Measured with a real Explorer drag: 7 of 7 ghosts when closing at
 # once, none in 8 of 8 when closing 100 ms or more after Esc.
 ESC_CLOSE_DELAY_MS = 150
+TAP_MS = 300  # FR-3.1: longest key-down to key-up of a tap
+DOUBLE_TAP_MS = 350  # FR-3.1 double-tap mode: first tap's key-up to the second's key-down
 VK_ESCAPE = 0x1B
 # Left/right/generic virtual keys -> modifier name, as used by config.keys
 MODIFIER_NAMES = {
@@ -63,6 +75,7 @@ class State(Enum):
     PRESSED = auto()
     DRAGGING = auto()
     WHEEL_OPEN = auto()
+    TAP_PENDING = auto()
 
 
 class Probe(Protocol):
@@ -75,6 +88,8 @@ class Probe(Protocol):
 
 
 class GestureController(QObject):
+    quick_launch = Signal(str, QPoint)  # "apps" | "sites", cursor position (FR-3.1, FR-3.5)
+
     def __init__(
         self,
         wheel: "WheelWindow",
@@ -83,6 +98,7 @@ class GestureController(QObject):
         probe: Probe | None = None,
         selection: Callable[[int, str], list[Path]] = selected_paths,
         cursor_pos: Callable[[], QPoint] = QCursor.pos,
+        context: ContextProbe | None = None,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
@@ -98,6 +114,11 @@ class GestureController(QObject):
         self._open_kind: Wheel | None = None
         self._kind_for_modifier: dict[str, Wheel] = {}
         self._paused = False
+        self._context: ContextProbe = context or Win32Context()
+        self._config = Config()
+        self._launch_for_modifier: dict[str, str] = {}  # modifier name -> "apps" | "sites"
+        self._tap = (0, 0)  # (vk, key-down t_ns) while TAP_PENDING
+        self._first_tap: tuple[int, int] | None = None  # (vk, key-up t_ns), double-tap mode
 
         self._timeout = QTimer(self)  # FR-1.9 safety timeout
         self._timeout.setSingleShot(True)
@@ -117,7 +138,7 @@ class GestureController(QObject):
 
     @Slot(object)
     def apply_config(self, config: Config) -> None:
-        """Modifier-to-wheel mapping (FR-1.3) and Pause (FR-1.12)."""
+        """Modifier-to-wheel mapping (FR-1.3), Quick Launch keys (FR-3.1), Pause (FR-1.12)."""
         mapping: dict[str, Wheel] = {}
         for kind, modifier in (
             ("convert", config.keys.convert),
@@ -126,12 +147,18 @@ class GestureController(QObject):
         ):
             mapping.setdefault(modifier, kind)  # if two wheels share a key, the first wins
         self._kind_for_modifier = mapping
+        launch: dict[str, str] = {}
+        launch.setdefault(config.keys.launch_apps, "apps")  # the same key for both: Apps wins
+        launch.setdefault(config.keys.launch_sites, "sites")
+        self._launch_for_modifier = launch
         self._paused = config.general.paused
+        self._config = config
 
     @Slot()
     def on_hooks_reinstalled(self) -> None:
         """The hooks were re-installed, so events were missed (a button-up, say): start over."""
         self._down_vks.clear()
+        self._first_tap = None
         self._close_wheel()
         self._to_idle()
 
@@ -139,17 +166,21 @@ class GestureController(QObject):
     def on_input(self, ev: RawInput) -> None:
         kind = ev.kind
         if kind is InputKind.KEY_DOWN:
-            self._key_down(ev.vk)
+            self._key_down(ev.vk, ev.t_ns)
         elif kind is InputKind.KEY_UP:
             self._down_vks.discard(ev.vk)
             self._held_at_press.discard(ev.vk)  # released: pressing it again is a new press
+            if self._state is State.TAP_PENDING and ev.vk == self._tap[0]:
+                self._tap_up(ev.vk, ev.t_ns)
         elif kind is InputKind.LBUTTON_DOWN:
+            self._cancel_tap()
             self._lmb_down(ev.x, ev.y)
         elif kind is InputKind.MOUSE_MOVE:
             self._move(ev.x, ev.y)
         elif kind is InputKind.LBUTTON_UP:
             self._lmb_up()
-        # MOUSE_OTHER only matters to the tap branch (DS-15)
+        elif kind is InputKind.MOUSE_OTHER:
+            self._cancel_tap()  # another mouse button or the wheel: not a tap (FR-3.1)
 
     # --- mouse
     def _lmb_down(self, x: int, y: int) -> None:
@@ -183,9 +214,13 @@ class GestureController(QObject):
             self._to_idle()
 
     # --- keyboard
-    def _key_down(self, vk: int) -> None:
+    def _key_down(self, vk: int, t_ns: int) -> None:
         repeat = vk in self._down_vks
+        others_held = bool(self._down_vks - {vk})
         self._down_vks.add(vk)
+        if self._state in (State.IDLE, State.TAP_PENDING):
+            self._tap_down(vk, t_ns, chord=repeat or others_held)
+            return
         if self._state is State.WHEEL_OPEN and vk == VK_ESCAPE:
             self._to_idle()
             if ESC_CLOSE_DELAY_MS > 0:
@@ -219,6 +254,42 @@ class GestureController(QObject):
         self._open_kind = kind
         self._state = State.WHEEL_OPEN
         self._timeout.start(WHEEL_TIMEOUT_MS)
+
+    # --- taps (FR-3.1)
+    def _tap_down(self, vk: int, t_ns: int, *, chord: bool) -> None:
+        """A key went down while idle. Only a lone launch modifier starts a tap."""
+        if self._state is State.TAP_PENDING or chord:
+            self._cancel_tap()  # a second key, or auto-repeat: a chord or a hold, not a tap
+            return
+        if MODIFIER_NAMES.get(vk) not in self._launch_for_modifier:
+            self._first_tap = None  # typing between two taps breaks a double tap
+            return
+        first = self._first_tap
+        if first and (first[0] != vk or t_ns - first[1] > DOUBLE_TAP_MS * 1_000_000):
+            self._first_tap = None  # too late, or another key: this starts over
+        self._tap = (vk, t_ns)
+        self._state = State.TAP_PENDING
+
+    def _tap_up(self, vk: int, t_ns: int) -> None:
+        self._state = State.IDLE
+        if t_ns - self._tap[1] > TAP_MS * 1_000_000:
+            self._first_tap = None  # held too long: a hold, not a tap
+            return
+        if self._config.keys.tap_mode == "double" and self._first_tap is None:
+            self._first_tap = (vk, t_ns)  # wait for the second tap
+            return
+        self._first_tap = None
+        kind = self._launch_for_modifier[MODIFIER_NAMES[vk]]
+        gate = failed_gate(self._context, self._config)
+        if gate is not None:
+            log.debug("%s tap ignored: gate %s failed", kind, gate)
+            return
+        self.quick_launch.emit(kind, self._cursor_pos())
+
+    def _cancel_tap(self) -> None:
+        self._first_tap = None
+        if self._state is State.TAP_PENDING:
+            self._state = State.IDLE
 
     # --- closing (FR-1.9)
     def _close_wheel(self) -> None:
