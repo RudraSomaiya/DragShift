@@ -148,7 +148,7 @@ def _free_part_dir(target: Path) -> Path:
 def extract_here(src: Path, ctx: "JobContext") -> Path | None:
     """Extract next to ``src``. Returns the item or the ``.part`` folder (JobManager renames
     it), or None if cancelled."""
-    part = _reserve_dir(src.parent / base_name(src), ctx)
+    part = _reserve_dir(ctx.out_dir(src) / base_name(src), ctx)
     try:
         extract(src, part, ctx)
         entries = list(part.iterdir())

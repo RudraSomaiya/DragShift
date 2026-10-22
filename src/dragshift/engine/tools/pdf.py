@@ -109,7 +109,7 @@ def split(paths: list[Path], params: dict, ctx: "JobContext") -> list[Path]:
             n = doc.page_count
             if n == 1:
                 raise ValueError("the PDF has only one page")
-            folder = new_folder(src.with_name(f"{src.stem} split"), ctx)
+            folder = new_folder(ctx.out_dir(src) / f"{src.stem} split", ctx)
             width = max(3, len(str(n)))
             for i in range(n):
                 if ctx.cancelled():

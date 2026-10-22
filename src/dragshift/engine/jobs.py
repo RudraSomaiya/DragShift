@@ -39,9 +39,18 @@ from dragshift.engine.worker import (
     run_job,
 )
 
-__all__ = ["CANCELLED", "JobContext", "JobManager", "JobResult", "apply_undo", "stamp"]
+__all__ = [
+    "CANCELLED",
+    "OUTPUT_FOLDER",
+    "JobContext",
+    "JobManager",
+    "JobResult",
+    "apply_undo",
+    "stamp",
+]
 
 REDIRECTED = "Saved to Downloads: the source folder is read-only"  # FR-5.3 toast note
+OUTPUT_FOLDER = "output_folder"  # submit() param: Settings > Output > one folder (FR-8.1)
 
 
 def _trash(paths: list[Path]) -> None:
@@ -173,16 +182,19 @@ class JobManager(QObject):
         groups = [[p] for p in paths] if op.multi == "each" else [paths]
         job_id = uuid.uuid4().hex
         params = dict(params or {})
+        # Settings > Output > one folder (FR-8.1): for JobContext, not the op's own params.
+        folder = params.pop(OUTPUT_FOLDER, None)
+        folder = Path(folder) if folder else None
         if op.where == "worker":
             try:
-                future = self._submit_to_pool(job_id, op.func, groups, params)
+                future = self._submit_to_pool(job_id, op.func, groups, params, folder)
             except BrokenProcessPool:  # a worker died since the last tick (NFR-9)
                 self._stop_pool()
-                future = self._submit_to_pool(job_id, op.func, groups, params)
+                future = self._submit_to_pool(job_id, op.func, groups, params, folder)
             pool = self._pool
         else:
             # "ui" ops (copy path, …) run on the Qt thread, but still after submit() returns.
-            ctx = JobContext(job_id, self._local_queue, self._local_cancel)
+            ctx = JobContext(job_id, self._local_queue, self._local_cancel, folder)
             future = Future()
 
             def run_inline() -> None:
@@ -239,10 +251,15 @@ class JobManager(QObject):
         )
 
     def _submit_to_pool(
-        self, job_id: str, func: str, groups: list[list[Path]], params: dict
+        self,
+        job_id: str,
+        func: str,
+        groups: list[list[Path]],
+        params: dict,
+        folder: Path | None = None,
     ) -> Future:
         self._ensure_pool()
-        ctx = JobContext(job_id, None, self._cancel_dir)  # None: the worker's own queue
+        ctx = JobContext(job_id, None, self._cancel_dir, folder)  # None: the worker's own queue
         return self._pool.submit(run_job, func, groups, params, ctx)
 
     def _prepare_cancel_dir(self) -> None:

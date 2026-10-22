@@ -154,6 +154,17 @@ class JobToasts(QObject):
         self._details[key] = message
         self.stack.show(key, ToastContent(title, message, ("Details",), kind="error"))
 
+    def undo(self, job_id: str) -> None:
+        """Undo a job from the tray's History (FR-5.7): the same as its toast's Undo button,
+        with the outcome in a toast."""
+        entry = self._history.get(job_id)
+        if entry is None:
+            return
+        self._results[job_id] = JobResult(
+            entry.op, list(entry.inputs), list(entry.outputs), entry.ok, entry.message, entry.undo
+        )
+        self._on_clicked(job_id, "Undo")
+
     def shutdown(self) -> None:
         self._running.clear()
         self.stack.close_all()
@@ -209,7 +220,7 @@ class JobToasts(QObject):
         except KeyError:
             self.stack.show(key, ToastContent("Already undone", name))
             return
-        del self._results[key]
+        self._results.pop(key, None)
         if kept:  # changed since the job: no longer the file DragShift wrote, so it stays
             what = kept[0].name if len(kept) == 1 else f"{len(kept)} files"
             note = f"Kept {what}: changed since it was made"

@@ -4,12 +4,13 @@
 what ``dragshift`` does: single instance (FR-6.3), logs to the console when there is one and
 always to a rotating file (FR-6.1, FR-6.5), autostart kept in step with the config (FR-7.2).
 ``--background`` is handled in ``__main__`` (FR-6.2). Finished jobs go to ``history.json``
-and a toast (FR-5.5, FR-5.7); their usage counts reorder the petals (FR-2.2). The tray, with its
-History menu, comes with DS-25.
+and a toast (FR-5.5, FR-5.7); their usage counts reorder the petals (FR-2.2). The tray (FR-7.1)
+opens Settings (FR-8.1), the History menu, Pause and the log folder.
 
 UI-process module: it must never import an engine library (CLAUDE.md rule 2).
 """
 
+import dataclasses
 import logging
 import os
 import signal
@@ -26,19 +27,21 @@ from PySide6.QtWidgets import QApplication, QWidget
 from dragshift.config import Config, ConfigStore
 from dragshift.engine import presets, registry, variants
 from dragshift.engine.actions import files as actions
-from dragshift.engine.jobs import JobManager, JobResult
+from dragshift.engine.jobs import OUTPUT_FOLDER, JobManager, JobResult
 from dragshift.gesture import GestureController
 from dragshift.history import History
 from dragshift.launcher import apps, sites
 from dragshift.launcher.sites import FaviconCache
-from dragshift.platform import autostart
+from dragshift.platform import autostart, files
 from dragshift.platform.hooks import HookInstallError, HookThread
 from dragshift.platform.single_instance import SingleInstance
 from dragshift.ui import theme
 from dragshift.ui.dialogs.base_glass import GlassDialog
 from dragshift.ui.dialogs.compress import CompressDialog
-from dragshift.ui.job_toasts import JobToasts
+from dragshift.ui.dialogs.settings import SettingsWindow
+from dragshift.ui.job_toasts import JobToasts, primary_output
 from dragshift.ui.launcher_wheel import LauncherWheel
+from dragshift.ui.tray import Tray
 from dragshift.ui.wheel import WheelWindow
 
 __all__ = ["App", "build", "run"]
@@ -72,7 +75,9 @@ class App(QObject):
             self.wheel, self.store.config, launcher_open=self.launcher.isVisible, parent=self
         )
         self.hooks = HookThread(self)
+        self.tray = Tray(self.history, self)  # shown by run(), not in tests
         self._dialog: GlassDialog | None = None  # the open op dialog (FR-2.5)
+        self.settings: SettingsWindow | None = None  # made when opened, gone when closed (NFR-1)
 
         queued = Qt.ConnectionType.QueuedConnection
         self.hooks.raw_input.connect(self.gesture.on_input, queued)
@@ -87,6 +92,11 @@ class App(QObject):
         self.launcher.add_requested.connect(self.on_add_requested)
         self.favicons.updated.connect(self.launcher.reload_icons)
         self.history.changed.connect(self.apply_ordering)
+        self.tray.settings_requested.connect(self.on_show_settings)
+        self.tray.pause_toggled.connect(self.set_paused)
+        self.tray.logs_requested.connect(lambda: files.open_path(log_dir()))
+        self.tray.quit_requested.connect(QApplication.quit)
+        self.tray.history_action.connect(self.on_history_action)
         self.on_config_changed(self.store.config)
 
     @Slot()
@@ -99,8 +109,12 @@ class App(QObject):
         self.wheel.set_appearance(config.appearance)  # theme, accent, reduced motion (§8.2)
         self.launcher.set_appearance(config.appearance)
         self.toasts.stack.set_appearance(config.appearance)
-        if self._dialog is not None:
-            self._dialog.set_theme(theme.resolve(config.appearance))
+        current = theme.resolve(config.appearance)
+        for window in (self._dialog, self.settings):
+            if window is not None:
+                window.set_theme(current)
+        self.tray.set_accent(current.accent)
+        self.tray.set_paused(config.general.paused)
         actions.pin_folders(config.folders.pinned)  # the Copy to / Move to rings (§6.3)
         self.apply_ordering()
         self.launcher.set_launcher(config.launcher)
@@ -112,9 +126,46 @@ class App(QObject):
                 log.warning("could not change autostart: %s", e)
 
     @Slot()
-    def on_show_settings(self) -> None:
-        """A second launch asked for Settings (FR-6.3). The Settings window comes with DS-25."""
-        log.info("DragShift is already running; Settings comes with DS-25")
+    def on_show_settings(self) -> SettingsWindow:
+        """Open Settings, or bring it to the front (the tray, a second launch: FR-6.3)."""
+        if self.settings is None:
+            window = SettingsWindow(self.store, theme.resolve(self.store.config.appearance))
+            window.reset_usage.connect(self.history.reset_usage)
+            window.finished.connect(lambda _result: self._settings_closed(window))
+            self.settings = window
+        self.settings.show()
+        self.settings.raise_()
+        self.settings.activateWindow()
+        return self.settings
+
+    def _settings_closed(self, window: SettingsWindow) -> None:
+        if self.settings is window:
+            self.settings = None
+        window.deleteLater()
+
+    @Slot(bool)
+    def set_paused(self, paused: bool) -> None:
+        """The tray's Pause gestures (FR-7.1, FR-1.12), saved like any setting."""
+        general = dataclasses.replace(self.store.config.general, paused=paused)
+        self.store.update(dataclasses.replace(self.store.config, general=general))
+
+    @Slot(str, str)
+    def on_history_action(self, job_id: str, action: str) -> None:
+        """Open, Show in folder or Undo from the tray's History (FR-5.7)."""
+        entry = self.history.get(job_id)
+        if entry is None:
+            return
+        if action == "undo":
+            self.toasts.undo(job_id)
+            return
+        result = JobResult(entry.op, list(entry.inputs), list(entry.outputs), True, "", entry.undo)
+        target = primary_output(result)
+        if target is None:
+            return
+        try:
+            (files.open_path if action == "open" else files.show_in_folder)(target)
+        except OSError as e:
+            self.toasts.error(f"Couldn't open {target.name}", str(e))
 
     @Slot(str, object)
     def on_dropped(self, op_id: str, paths: list[Path]) -> None:
@@ -127,6 +178,8 @@ class App(QObject):
         # they apply live.
         output = self.store.config.output
         params = {"quality": output.jpeg_quality, "dpi": output.pdf_dpi}
+        if output.location == "fixed_folder" and output.fixed_folder:
+            params[OUTPUT_FOLDER] = output.fixed_folder  # Settings > Output > one folder
         params |= actions.params_for(op_id)  # a Copy to / Move to ring: its folder
         params |= variants.params_for(op_id)  # a ring Op: Compress preset (FR-4.3), Resize...
         if presets.is_compress(op_id):
@@ -183,8 +236,10 @@ class App(QObject):
 
     @Slot(str, int)
     def on_add_requested(self, kind: str, index: int) -> None:
-        # FR-3.6: Settings > Launcher comes with DS-25.
-        log.info("empty %s slot %d: add it in config.json until Settings exists", kind, index + 1)
+        """An empty slot's "+ Add" petal opens Settings > Launcher on that slot (FR-3.6)."""
+        window = self.on_show_settings()
+        window.show_tab("Launcher")
+        window.launcher.show_slot(kind, index)
 
     @Slot(str, object)
     def on_finished(self, job_id: str, result: JobResult) -> None:
@@ -198,6 +253,9 @@ class App(QObject):
         self.toasts.finished(job_id, result)  # FR-5.5
 
     def shutdown(self) -> None:
+        self.tray.hide()
+        if self.settings is not None:
+            self.settings.close()
         self.hooks.stop_hooks()
         self.wheel.close()
         self.launcher.close()
@@ -253,6 +311,7 @@ def run() -> int:
     except HookInstallError as exc:
         log.error("could not install the input hooks: %s", exc)
         return 1
+    app.tray.show()  # once the hooks are in: the icon means DragShift is ready
     signal.signal(signal.SIGINT, lambda *_: qt.quit())  # Ctrl+C
     keepalive = QTimer()  # lets Python see the signal while Qt's loop runs
     keepalive.timeout.connect(lambda: None)
