@@ -4,20 +4,34 @@ Every call is cheap (one registry read or one API call), so the wheel asks again
 follows a change in Windows settings without listening for one. Everything returns ``None`` (or
 the Windows default) when the setting cannot be read, and the theme code applies its fallbacks.
 
-The DWM backdrop, dark-mode and corner attributes for dialogs (§8.6) come with the dialog stories.
+``apply_acrylic`` sets the DWM backdrop, dark-mode and corner attributes of a dialog (§8.6).
 """
 
 import ctypes
+import sys
 import winreg
 from ctypes import wintypes
 
-__all__ = ["accent_rgb", "animations_enabled", "apps_use_light_theme"]
+__all__ = [
+    "CORNER_RADIUS",
+    "accent_rgb",
+    "animations_enabled",
+    "apply_acrylic",
+    "apps_use_light_theme",
+]
 
 RGB = tuple[int, int, int]
 
 # Win32 constants
 SPI_GETCLIENTAREAANIMATION = 0x1042  # SystemParametersInfoW: "Animation effects" (BOOL)
 S_OK = 0
+DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+DWMWA_WINDOW_CORNER_PREFERENCE = 33
+DWMWA_SYSTEMBACKDROP_TYPE = 38
+DWMSBT_TRANSIENTWINDOW = 3  # Acrylic
+DWMWCP_ROUND = 2
+CORNER_RADIUS = 8  # px, what DWMWCP_ROUND draws on Windows 11
+WIN11_22H2 = 22621  # first build that honours DWMWA_SYSTEMBACKDROP_TYPE
 _PERSONALIZE = r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
 _DWM = r"Software\Microsoft\Windows\DWM"
 
@@ -36,6 +50,17 @@ _dwmapi.DwmGetColorizationColor.argtypes = [
     ctypes.POINTER(wintypes.BOOL),
 ]
 _dwmapi.DwmGetColorizationColor.restype = ctypes.c_long
+# DwmSetWindowAttribute(HWND, DWORD attribute, LPCVOID value, DWORD size) -> HRESULT
+_dwmapi.DwmSetWindowAttribute.argtypes = [
+    wintypes.HWND,
+    wintypes.DWORD,
+    ctypes.c_void_p,
+    wintypes.DWORD,
+]
+_dwmapi.DwmSetWindowAttribute.restype = ctypes.c_long
+# DwmExtendFrameIntoClientArea(HWND, const MARGINS*) -> HRESULT
+_dwmapi.DwmExtendFrameIntoClientArea.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.INT * 4)]
+_dwmapi.DwmExtendFrameIntoClientArea.restype = ctypes.c_long
 
 
 def rgb_from_argb(value: int) -> RGB:
@@ -88,3 +113,25 @@ def animations_enabled() -> bool:
     if not _user32.SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, ctypes.byref(enabled), 0):
         return True
     return bool(enabled.value)
+
+
+def _set_attribute(hwnd: int, attribute: int, value: int) -> bool:
+    v = wintypes.DWORD(value)
+    return _dwmapi.DwmSetWindowAttribute(hwnd, attribute, ctypes.byref(v), ctypes.sizeof(v)) == S_OK
+
+
+def apply_acrylic(hwnd: int, dark: bool) -> bool:
+    """Acrylic backdrop, per-theme dark mode and round corners for a dialog (§8.6).
+
+    False on Windows 10 or when DWM refuses: the caller paints its opaque fallback panel.
+    """
+    if sys.getwindowsversion().build < WIN11_22H2:
+        return False
+    try:
+        _set_attribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, int(dark))
+        _set_attribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND)
+        margins = (wintypes.INT * 4)(-1, -1, -1, -1)  # sheet of glass: the whole client area
+        _dwmapi.DwmExtendFrameIntoClientArea(hwnd, ctypes.byref(margins))
+        return _set_attribute(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, DWMSBT_TRANSIENTWINDOW)
+    except (OSError, ctypes.ArgumentError):
+        return False  # a dialog must still open: it paints the fallback panel

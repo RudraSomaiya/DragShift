@@ -23,6 +23,7 @@ __all__ = [
     "Palette",
     "Theme",
     "contrast",
+    "css",
     "label_font",
     "make",
     "over",
@@ -89,6 +90,11 @@ SHADOW_OFFSET, SHADOW_BLUR = 12, 32
 def _rgba(value: RGBA) -> QColor:
     r, g, b, a = value
     return QColor(r, g, b, round(a * 255))
+
+
+def css(c: QColor) -> str:
+    """A colour as a Qt style sheet ``rgba()``."""
+    return f"rgba({c.red()},{c.green()},{c.blue()},{c.alphaF():.3f})"
 
 
 def over(top: QColor, bottom: QColor) -> QColor:

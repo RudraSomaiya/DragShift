@@ -5,6 +5,7 @@ import hashlib
 import subprocess
 import sys
 from collections.abc import Iterator
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -304,3 +305,17 @@ def test_a_second_custom_drop_replaces_the_open_dialog(
     the_app._dialog.accept()
     assert [s[1][0].name for s in submitted] == ["b.png"]  # one job, for the latest drop
     assert the_app._dialog is None
+
+
+def test_the_dialog_gets_the_resolved_theme_and_follows_changes(
+    the_app: App, tmp_path: Path
+) -> None:
+    src = png(tmp_path / "a.png")
+    the_app.wheel.dropped.emit("tools.image.compress.custom", [src])
+    dialog = the_app._dialog
+    assert dialog.theme.dark in (True, False)
+    config = the_app.store.config
+    dark = config.appearance.theme != "dark"
+    appearance = replace(config.appearance, theme="dark" if dark else "light")
+    the_app.on_config_changed(replace(config, appearance=appearance))
+    assert dialog.theme.dark is dark
