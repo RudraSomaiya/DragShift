@@ -42,7 +42,7 @@ class Cancelled(Exception):
 
 # --- reading ---------------------------------------------------------------------------------
 @contextmanager
-def _open(src: Path) -> Iterator["Document"]:
+def open_pdf(src: Path) -> Iterator["Document"]:
     import pymupdf
 
     try:
@@ -87,7 +87,7 @@ def _rasterise(paths: list[Path], params: dict, ctx: "JobContext", ext: str) -> 
     quality = int(params.get("quality", QUALITY))
     outputs = []
     for src in paths:
-        with _open(src) as doc:
+        with open_pdf(src) as doc:
             if doc.page_count == 1:
                 folder, labels = None, [None]
             else:
@@ -132,7 +132,7 @@ def to_docx(paths: list[Path], params: dict, ctx: "JobContext") -> list[Path]:
     converter = _import_pdf2docx()
     outputs = []
     for src in paths:
-        with _open(src):  # readable, unlocked and not empty, with a clear message if not
+        with open_pdf(src):  # readable, unlocked and not empty, with a clear message if not
             pass
         cv = converter(str(src))
         try:
@@ -174,7 +174,7 @@ def to_txt(paths: list[Path], params: dict, ctx: "JobContext") -> list[Path]:
     """The text layer, pages separated by a form feed (``\\f``)."""
     outputs = []
     for src in paths:
-        with _open(src) as doc:
+        with open_pdf(src) as doc:
             text = "\f".join(doc[i].get_text() for i in _pages(doc, ctx))
         dst = ctx.output_path(src, ext="txt")
         _write_text(dst, text)
@@ -189,7 +189,7 @@ def to_md(paths: list[Path], params: dict, ctx: "JobContext") -> list[Path]:
 
     outputs = []
     for src in paths:
-        with _open(src) as doc:
+        with open_pdf(src) as doc:
             text = "\n".join(
                 pymupdf4llm.to_markdown(doc, pages=[i], use_ocr=False) for i in _pages(doc, ctx)
             )
@@ -209,7 +209,7 @@ def to_pptx(paths: list[Path], params: dict, ctx: "JobContext") -> list[Path]:
     for src in paths:
         prs = Presentation()
         blank = prs.slide_layouts[6]
-        with _open(src) as doc:
+        with open_pdf(src) as doc:
             first = doc[0].rect
             scale = min(1.0, PPTX_MAX_SIDE / (max(first.width, first.height) * EMU_PER_PT))
             prs.slide_width = max(PPTX_MIN_SIDE, int(first.width * EMU_PER_PT * scale))

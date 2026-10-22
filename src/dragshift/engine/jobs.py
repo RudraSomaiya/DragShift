@@ -324,6 +324,8 @@ class JobManager(QObject):
                 Path(part).unlink(missing_ok=True)
                 messages.append(f"Could not save {final_path(Path(part)).name}: {e}")
         ok = raw["ok"] and not messages
+        if outputs:
+            messages += raw.get("notes", ())  # FR-4.4 "Couldn't reach 10 MB", a success note
         if raw.get("redirected") and outputs:
             messages.append(REDIRECTED)  # a note on a successful job too, for its toast
         undo: dict = {}

@@ -142,6 +142,7 @@ class JobContext:
         self.copied = ""  # text for the clipboard, set on the Qt thread (Copy path, SHA-256)
         self.final: list[Path] = []  # outputs the op renamed itself: JobManager leaves them be
         self.moves: list[tuple[Path, Path]] = []  # (from, to) per moved source, for Undo
+        self.notes: list[str] = []  # lines for a successful job's toast (FR-4.4)
 
     def output_path(
         self, src: Path, *, ext: str, label: str | None = None, folder: Path | None = None
@@ -239,6 +240,12 @@ class JobContext:
         worker has no window to own the clipboard."""
         self.copied = text
 
+    def note(self, text: str) -> None:
+        """A line for the toast of a job that succeeded, e.g. "Couldn't reach 10 MB — got
+        14.2 MB" (FR-4.4). It does not make the job fail."""
+        if text:
+            self.notes.append(text)
+
 
 def resolve(func: str) -> Any:
     module, _, attr = func.partition(":")
@@ -267,13 +274,17 @@ def run_job(func: str, groups: list[list[Path]], params: dict, ctx: JobContext) 
             if ctx.cancelled():
                 break
             ctx._slot = (i, len(groups))
-            start = len(ctx.reserved)
+            start, notes = len(ctx.reserved), len(ctx.notes)
+            name = paths[0].name if len(paths) == 1 else f"{len(paths)} files"
             try:
                 outputs += fn(paths, params, ctx)
             except Exception as e:  # noqa: BLE001 - any Op failure becomes a toast (NFR-9)
                 ctx.discard(ctx.reserved[start:])
-                name = paths[0].name if len(paths) == 1 else f"{len(paths)} files"
+                del ctx.notes[notes:]  # a note about a file that was not written
                 errors.append(_error(e) if len(groups) == 1 else f"{name}: {_error(e)}")
+            else:
+                if len(groups) > 1:  # say which file a note is about, as errors do
+                    ctx.notes[notes:] = [f"{name}: {n}" for n in ctx.notes[notes:]]
     except BaseException:  # SystemExit and the like: clean up, then let it propagate
         ctx.discard(ctx.reserved)
         raise
@@ -304,4 +315,6 @@ def run_job(func: str, groups: list[list[Path]], params: dict, ctx: JobContext) 
         result["moves"] = [list(m) for m in ctx.moves]
     if ctx.copied:
         result["copied"] = ctx.copied
+    if ctx.notes and outputs:
+        result["notes"] = list(ctx.notes)
     return result

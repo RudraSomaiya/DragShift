@@ -8,6 +8,7 @@ HEAVY = ["PIL", "fitz", "pandas", "numpy", "pdf2docx", "pypandoc"]
 SCRIPT = f"""
 import sys
 import dragshift.ui.wheel
+import dragshift.ui.dialogs.compress
 print(",".join(m for m in {HEAVY!r} if m in sys.modules))
 """
 

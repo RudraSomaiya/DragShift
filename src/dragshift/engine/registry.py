@@ -34,8 +34,8 @@ class Op:
     hide_if_same_ext: str | None = None  # hide the "PNG" petal for .png input
 
 
-# Packages whose modules declare Ops. Add tools here when that package exists.
-_OP_PACKAGES = ("dragshift.engine.converters", "dragshift.engine.actions")
+# Packages whose modules declare Ops.
+_OP_PACKAGES = ("dragshift.engine.converters", "dragshift.engine.tools", "dragshift.engine.actions")
 
 _OPS: dict[str, Op] = {}  # insertion order = default petal order (PRD §6)
 _loaded = False

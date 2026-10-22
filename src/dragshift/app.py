@@ -21,10 +21,10 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, QPoint, Qt, QTimer, Slot
 from PySide6.QtGui import QGuiApplication
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QWidget
 
 from dragshift.config import Config, ConfigStore
-from dragshift.engine import registry
+from dragshift.engine import presets, registry
 from dragshift.engine.actions import files as actions
 from dragshift.engine.jobs import JobManager, JobResult
 from dragshift.gesture import GestureController
@@ -34,6 +34,7 @@ from dragshift.launcher.sites import FaviconCache
 from dragshift.platform import autostart
 from dragshift.platform.hooks import HookInstallError, HookThread
 from dragshift.platform.single_instance import SingleInstance
+from dragshift.ui.dialogs.compress import CompressDialog
 from dragshift.ui.job_toasts import JobToasts
 from dragshift.ui.launcher_wheel import LauncherWheel
 from dragshift.ui.wheel import WheelWindow
@@ -41,6 +42,10 @@ from dragshift.ui.wheel import WheelWindow
 __all__ = ["App", "build", "run"]
 
 log = logging.getLogger(__name__)
+
+# Op.dialog -> the window that collects its params (§8.6). Crop, Add BG and Extract pages come
+# with their own stories.
+DIALOGS = {"compress": CompressDialog}
 
 
 class App(QObject):
@@ -65,6 +70,7 @@ class App(QObject):
             self.wheel, self.store.config, launcher_open=self.launcher.isVisible, parent=self
         )
         self.hooks = HookThread(self)
+        self._dialog: QWidget | None = None  # the open op dialog (FR-2.5)
 
         queued = Qt.ConnectionType.QueuedConnection
         self.hooks.raw_input.connect(self.gesture.on_input, queued)
@@ -109,7 +115,8 @@ class App(QObject):
     @Slot(str, object)
     def on_dropped(self, op_id: str, paths: list[Path]) -> None:
         """A drop on an enabled petal. The sources are only read: outputs are new files."""
-        if registry.get(op_id).dialog:
+        dialog = registry.get(op_id).dialog
+        if dialog is not None and dialog not in DIALOGS:
             log.warning("%s needs a dialog, which is not built yet; nothing was run", op_id)
             return
         # Settings > Output > JPEG/WebP quality and PDF raster DPI (FR-8.1), read at drop time so
@@ -117,8 +124,32 @@ class App(QObject):
         output = self.store.config.output
         params = {"quality": output.jpeg_quality, "dpi": output.pdf_dpi}
         params |= actions.params_for(op_id)  # a Copy to / Move to ring: its folder
-        job_id = self.jobs.submit(op_id, list(paths), params)
-        self.toasts.started(job_id, op_id, list(paths))  # a progress toast after 1 s (FR-4.5)
+        params |= presets.params_for(op_id)  # a Compress ring: its size preset (FR-4.3)
+        if presets.is_compress(op_id):
+            params["allow_format_change"] = output.allow_format_change_for_size  # §6.2 PNG→WebP
+        if dialog is None:
+            self.submit(op_id, list(paths), params)
+            return
+        # FR-2.5: the dialog opens after the drop and runs the job when accepted. It is shown,
+        # not exec()'d: the drop must return to Explorer at once.
+        if self._dialog is not None:  # one at a time: a new drop replaces an open dialog
+            self._dialog.reject()
+        window = DIALOGS[dialog](list(paths))
+        window.accepted.connect(lambda: self.submit(op_id, list(paths), params | window.params()))
+        window.finished.connect(lambda _result: self._dialog_closed(window))
+        self._dialog = window
+        window.show()
+        window.raise_()
+        window.activateWindow()
+
+    def _dialog_closed(self, window: QWidget) -> None:
+        if self._dialog is window:
+            self._dialog = None
+        window.deleteLater()  # after accepted has run the job with its params
+
+    def submit(self, op_id: str, paths: list[Path], params: dict) -> None:
+        job_id = self.jobs.submit(op_id, paths, params)
+        self.toasts.started(job_id, op_id, paths)  # a progress toast after 1 s (FR-4.5)
 
     @Slot(str, QPoint)
     def on_quick_launch(self, kind: str, at: QPoint) -> None:
