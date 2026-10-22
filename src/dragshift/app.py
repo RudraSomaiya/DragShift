@@ -34,6 +34,8 @@ from dragshift.launcher.sites import FaviconCache
 from dragshift.platform import autostart
 from dragshift.platform.hooks import HookInstallError, HookThread
 from dragshift.platform.single_instance import SingleInstance
+from dragshift.ui import theme
+from dragshift.ui.dialogs.base_glass import GlassDialog
 from dragshift.ui.dialogs.compress import CompressDialog
 from dragshift.ui.job_toasts import JobToasts
 from dragshift.ui.launcher_wheel import LauncherWheel
@@ -70,7 +72,7 @@ class App(QObject):
             self.wheel, self.store.config, launcher_open=self.launcher.isVisible, parent=self
         )
         self.hooks = HookThread(self)
-        self._dialog: QWidget | None = None  # the open op dialog (FR-2.5)
+        self._dialog: GlassDialog | None = None  # the open op dialog (FR-2.5)
 
         queued = Qt.ConnectionType.QueuedConnection
         self.hooks.raw_input.connect(self.gesture.on_input, queued)
@@ -97,6 +99,8 @@ class App(QObject):
         self.wheel.set_appearance(config.appearance)  # theme, accent, reduced motion (§8.2)
         self.launcher.set_appearance(config.appearance)
         self.toasts.stack.set_appearance(config.appearance)
+        if self._dialog is not None:
+            self._dialog.set_theme(theme.resolve(config.appearance))
         actions.pin_folders(config.folders.pinned)  # the Copy to / Move to rings (§6.3)
         self.apply_ordering()
         self.launcher.set_launcher(config.launcher)
@@ -134,7 +138,7 @@ class App(QObject):
         # not exec()'d: the drop must return to Explorer at once.
         if self._dialog is not None:  # one at a time: a new drop replaces an open dialog
             self._dialog.reject()
-        window = DIALOGS[dialog](list(paths))
+        window = DIALOGS[dialog](list(paths), theme.resolve(self.store.config.appearance))
         window.accepted.connect(lambda: self.submit(op_id, list(paths), params | window.params()))
         window.finished.connect(lambda _result: self._dialog_closed(window))
         self._dialog = window

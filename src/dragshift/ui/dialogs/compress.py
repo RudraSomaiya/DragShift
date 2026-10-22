@@ -1,8 +1,7 @@
 """The Custom compress dialog (PRD §8.6, FR-4.3): a target size in MB or a quality, plus an
 estimate line.
 
-It is a plain window for now; DS-24 gives it the Acrylic base and the styled controls. It only
-collects params: the App submits the job when it is accepted.
+It only collects params: the App submits the job when it is accepted.
 
 UI-process module: it must never import an engine library (CLAUDE.md rule 2).
 """
@@ -13,19 +12,18 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QButtonGroup,
-    QDialog,
-    QDialogButtonBox,
     QDoubleSpinBox,
     QGridLayout,
+    QHBoxLayout,
     QLabel,
     QRadioButton,
     QSlider,
-    QVBoxLayout,
-    QWidget,
 )
 
 from dragshift.engine.presets import MB, mb_text
+from dragshift.ui.dialogs.base_glass import GlassDialog, primary_button, secondary_button
 from dragshift.ui.job_toasts import size_of
+from dragshift.ui.theme import Theme
 
 DEFAULT_MB = 10.0
 DEFAULT_QUALITY = 75
@@ -41,13 +39,11 @@ def _sizes(paths: Sequence[Path]) -> list[int]:
     return sizes
 
 
-class CompressDialog(QDialog):
+class CompressDialog(GlassDialog):
     """``params()`` is ``{"target_mb": x}`` or ``{"quality": q}``."""
 
-    def __init__(self, paths: Sequence[Path], parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("Custom compress")
-        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint)
+    def __init__(self, paths: Sequence[Path], theme: Theme) -> None:
+        super().__init__("Custom compress", theme)
         self._sizes = _sizes(paths)
         self._size = sum(self._sizes)
 
@@ -71,12 +67,13 @@ class CompressDialog(QDialog):
         self.quality_value = QLabel()
 
         self.estimate = QLabel()
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Compress")
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
+        cancel, compress = secondary_button("Cancel"), primary_button("Compress")
+        cancel.clicked.connect(self.reject)
+        compress.clicked.connect(self.accept)
+        buttons = QHBoxLayout()
+        buttons.addStretch()
+        buttons.addWidget(cancel)
+        buttons.addWidget(compress)
 
         grid = QGridLayout()
         grid.addWidget(self.by_size, 0, 0)
@@ -84,10 +81,9 @@ class CompressDialog(QDialog):
         grid.addWidget(self.by_quality, 1, 0)
         grid.addWidget(self.quality, 1, 1)
         grid.addWidget(self.quality_value, 1, 2)
-        layout = QVBoxLayout(self)
-        layout.addLayout(grid)
-        layout.addWidget(self.estimate)
-        layout.addWidget(buttons)
+        self.body.addLayout(grid)
+        self.body.addWidget(self.estimate)
+        self.body.addLayout(buttons)
 
         for signal in (self.by_size.toggled, self.target.valueChanged, self.quality.valueChanged):
             signal.connect(self._update)

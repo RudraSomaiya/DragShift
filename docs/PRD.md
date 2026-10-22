@@ -302,6 +302,7 @@ The desktop behind a wheel is effectively static while the wheel is open, so we 
 
 ### 8.6 Dialogs (Crop, Add BG, Custom compress, Extract pages, Settings)
 - **Base (`dialogs/base_glass.py`):**
+  - `GlassDialog(title, theme)`; every dialog is built as `Dialog(paths, theme)` (App passes `theme.resolve(appearance)`) and has `set_theme()` so it follows Windows light/dark while open.
   - Frameless window with a custom 40 px title bar (centred title, ✕ at left, the way the Tangerine dialogs look).
   - Backdrop: `DwmSetWindowAttribute(DWMWA_SYSTEMBACKDROP_TYPE=38, DWMSBT_TRANSIENTWINDOW=3)` (Acrylic), `DWMWA_USE_IMMERSIVE_DARK_MODE=20` per theme, and `DWMWA_WINDOW_CORNER_PREFERENCE=33 → DWMWCP_ROUND`. The window needs `WA_TranslucentBackground` plus `DwmExtendFrameIntoClientArea(-1)`.
   - **Fallback** (Windows 10, or the attribute fails): an opaque panel `#F3F5F9` (light) / `#1B1F27` (dark) at 96 % alpha.
