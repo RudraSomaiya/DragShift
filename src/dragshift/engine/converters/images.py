@@ -31,30 +31,30 @@ PDF_DPI = 96  # page size for images that do not say their own resolution
 
 
 @dataclass(frozen=True)
-class _Target:
+class ImageFormat:
     format: str  # Pillow format name
     alpha: bool  # keeps transparency; False flattens it onto white
     lossy: bool = False  # takes params["quality"]
     options: dict[str, Any] = field(default_factory=dict)
 
 
-_TARGETS = {
-    "jpg": _Target("JPEG", alpha=False, lossy=True),
-    "png": _Target("PNG", alpha=True),
-    "webp": _Target("WEBP", alpha=True, lossy=True),
-    "heic": _Target("HEIF", alpha=True, lossy=True),
-    "avif": _Target("AVIF", alpha=True, lossy=True),
-    "pdf": _Target("PDF", alpha=False),
-    "tiff": _Target("TIFF", alpha=True, options={"compression": "tiff_lzw"}),
-    "bmp": _Target("BMP", alpha=False),  # most viewers ignore BMP alpha
-    "ico": _Target("ICO", alpha=True, options={"sizes": ICO_SIZES}),
+TARGETS = {
+    "jpg": ImageFormat("JPEG", alpha=False, lossy=True),
+    "png": ImageFormat("PNG", alpha=True),
+    "webp": ImageFormat("WEBP", alpha=True, lossy=True),
+    "heic": ImageFormat("HEIF", alpha=True, lossy=True),
+    "avif": ImageFormat("AVIF", alpha=True, lossy=True),
+    "pdf": ImageFormat("PDF", alpha=False),
+    "tiff": ImageFormat("TIFF", alpha=True, options={"compression": "tiff_lzw"}),
+    "bmp": ImageFormat("BMP", alpha=False),  # most viewers ignore BMP alpha
+    "ico": ImageFormat("ICO", alpha=True, options={"sizes": ICO_SIZES}),
 }
 _KEEPS_ICC = {"JPEG", "PNG", "WEBP", "HEIF", "AVIF", "TIFF"}
 
 
 # --- reading ---------------------------------------------------------------------------------
 @cache
-def _register_heif() -> None:
+def register_heif() -> None:
     """Let Pillow open and save HEIC/HEIF (pillow-heif). Once per worker process."""
     import pillow_heif
 
@@ -95,13 +95,13 @@ def _render_svg(src: Path) -> "Image":
     return Image.frombytes("RGBA", (w, h), raw, "raw", "RGBA", canvas.bytesPerLine())
 
 
-def _open(src: Path) -> "Image":
+def open_image(src: Path) -> "Image":
     """The first frame of ``src``, loaded and turned upright by its EXIF orientation."""
     if normalize_ext(src.suffix) == "svg":
         return _render_svg(src)
     from PIL import Image, ImageOps
 
-    _register_heif()
+    register_heif()
     with Image.open(src) as im:
         im.seek(0)  # animated GIF/WebP, multi-page TIFF: the first frame
         return ImageOps.exif_transpose(im)  # a loaded copy, upright
@@ -121,7 +121,7 @@ def _flatten_on_white(im: "Image") -> "Image":
     return bg
 
 
-def _prepare(im: "Image", target: _Target) -> "Image":
+def prepare(im: "Image", target: ImageFormat) -> "Image":
     """``im`` as RGB or RGBA for ``target``. Keeps the ICC profile only when it still describes
     the pixels (RGB sources), and the DPI for PDF page sizes."""
     icc = im.info.get("icc_profile") if im.mode in ("RGB", "RGBA") else None
@@ -152,9 +152,9 @@ def _pdf_dpi(im: "Image") -> float:
     return float(dpi[0]) if dpi and dpi[0] > 1 else PDF_DPI
 
 
-def _save(im: "Image", dst: Path, target: _Target, params: dict, **extra: Any) -> None:
+def _save(im: "Image", dst: Path, target: ImageFormat, params: dict, **extra: Any) -> None:
     """Write ``im`` to ``dst`` (a ``.part`` path, so the format is always named)."""
-    _register_heif()
+    register_heif()
     kwargs = {**target.options, **extra}
     if target.lossy:
         kwargs["quality"] = int(params.get("quality", QUALITY))
@@ -166,10 +166,10 @@ def _save(im: "Image", dst: Path, target: _Target, params: dict, **extra: Any) -
 
 
 def _convert(paths: list[Path], params: dict, ctx: "JobContext", ext: str) -> list[Path]:
-    target = _TARGETS[ext]
+    target = TARGETS[ext]
     outputs = []
     for src in paths:
-        im = _prepare(_open(src), target)
+        im = prepare(open_image(src), target)
         if ext == "ico":
             im = _square_icon(im)
         dst = ctx.output_path(src, ext=ext)
@@ -241,12 +241,12 @@ def merge_to_pdf(paths: list[Path], params: dict, ctx: "JobContext") -> list[Pat
     """One PDF, one page per image in natural file-name order (Explorer's drop order starts
     with whichever file was clicked). Named ``<first> Merged.pdf`` next to the first image."""
     ordered = sorted(paths, key=natural_key)
-    target = _TARGETS["pdf"]
+    target = TARGETS["pdf"]
     pages = []
     for i, src in enumerate(ordered):
         if ctx.cancelled():
             return []  # run_job discards anything reserved
-        pages.append(_prepare(_open(src), target))
+        pages.append(prepare(open_image(src), target))
         ctx.progress((i + 1) / (len(ordered) + 1), src.name)
     dst = ctx.output_path(ordered[0], ext="pdf", label="Merged")
     _save(pages[0], dst, target, params, save_all=True, append_images=pages[1:])

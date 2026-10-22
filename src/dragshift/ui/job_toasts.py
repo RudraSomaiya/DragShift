@@ -20,6 +20,7 @@ from PySide6.QtGui import QGuiApplication
 
 from dragshift.engine import registry
 from dragshift.engine.jobs import JobManager, JobResult
+from dragshift.engine.presets import human_size
 from dragshift.history import History
 from dragshift.platform import files
 from dragshift.ui.toast import ToastContent, ToastStack
@@ -27,18 +28,6 @@ from dragshift.ui.toast import ToastContent, ToastStack
 __all__ = ["JobToasts", "human_size", "primary_output", "progress_content", "result_content"]
 
 log = logging.getLogger(__name__)
-
-
-def human_size(n: int) -> str:
-    """Bytes as Explorer shows them: 512 B, 860 KB, 1.2 MB, 14 MB."""
-    if n < 1024:
-        return f"{n} B"
-    value = float(n)
-    for unit in ("KB", "MB", "GB", "TB"):
-        value /= 1024
-        if value < 1024 or unit == "TB":
-            break
-    return f"{value:.1f} {unit}" if value < 10 else f"{value:.0f} {unit}"
 
 
 def _op_label(op_id: str) -> tuple[bool, str]:
@@ -63,16 +52,16 @@ def primary_output(result: JobResult) -> Path | None:
     return result.outputs[0]
 
 
-def _size(path: Path) -> int:
+def size_of(path: Path) -> int:
     """A file's size, or the total of the files in a folder output (an extracted archive)."""
     if path.is_dir():
         return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
     return path.stat().st_size
 
 
-def _total_size(paths: Sequence[Path]) -> int | None:
+def total_size(paths: Sequence[Path]) -> int | None:
     try:
-        return sum(map(_size, paths))
+        return sum(map(size_of, paths))
     except OSError:
         return None
 
@@ -90,7 +79,7 @@ def result_content(result: JobResult) -> ToastContent:
     parts = [f"Converted to {label}" if to_format else label]
     if len(result.outputs) > 1:
         parts.append(f"{len(result.outputs)} files")
-    size = _total_size(result.outputs)
+    size = total_size(result.outputs)
     if size is not None:
         parts.append(human_size(size))
     # A note on a successful job (it went to Downloads, FR-5.3) replaces the summary.

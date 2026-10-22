@@ -458,6 +458,8 @@ class JobContext:
         # the first free base, base (2), … as an empty *.part, in that folder or not at all (Copy to, Move to)
     def copy_text(self, text: str) -> None: ...
         # put text on the clipboard when the job finishes; the UI process does it (Copy path, SHA-256)
+    def note(self, text: str) -> None: ...
+        # a line for a successful job's toast, e.g. "Couldn't reach 10 MB — got 14.2 MB" (FR-4.4)
     final: list[Path]                 # outputs the op renamed itself; JobManager leaves their names alone
     moves: list[tuple[Path, Path]]    # (from, to) per item Move to moved, for Undo
 

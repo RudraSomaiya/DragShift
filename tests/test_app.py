@@ -245,3 +245,62 @@ def test_copied_text_goes_on_the_clipboard(the_app: App) -> None:
     result = JobResult("actions.copy_name", [Path("C:/x/a.png")], [], True, "", {}, copied="a.png")
     the_app.jobs.finished.emit("job-1", result)
     assert QGuiApplication.clipboard().text() == "a.png"
+
+
+def test_a_drop_on_a_compress_preset_sends_its_preset(
+    the_app: App, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """FR-4.3: one drop on the ring is enough; Settings decides whether PNG may become WebP."""
+    submitted: list[tuple] = []
+    monkeypatch.setattr(the_app.jobs, "submit", lambda *a, **k: submitted.append(a) or "id")
+    the_app.wheel.dropped.emit("tools.image.compress.discord", [Path("C:/x/a.png")])
+    the_app.wheel.dropped.emit("tools.image.compress", [Path("C:/x/a.png")])
+    assert [s[2] for s in submitted] == [
+        {"quality": 85, "dpi": 300, "preset": "discord", "allow_format_change": False},
+        {"quality": 85, "dpi": 300, "allow_format_change": False},  # Small, in the worker
+    ]
+
+
+def test_custom_compress_asks_first_and_runs_on_accept(
+    the_app: App, monkeypatch: pytest.MonkeyPatch, qtbot: QtBot, tmp_path: Path
+) -> None:
+    """FR-2.5: the dialog opens after the drop, takes focus, and the job runs only on accept."""
+    submitted: list[tuple] = []
+    monkeypatch.setattr(the_app.jobs, "submit", lambda *a, **k: submitted.append(a) or "id")
+    src = png(tmp_path / "a.png")
+    the_app.wheel.dropped.emit("tools.image.compress.custom", [src])
+    dialog = the_app._dialog
+    assert dialog.isVisible() and submitted == []
+    dialog.target.setValue(2.5)
+    dialog.accept()
+    assert submitted == [
+        (
+            "tools.image.compress.custom",
+            [src],
+            {"quality": 85, "dpi": 300, "preset": "custom", "allow_format_change": False,
+             "target_mb": 2.5},
+        )
+    ]  # fmt: skip
+
+
+def test_cancelling_the_compress_dialog_runs_nothing(
+    the_app: App, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(the_app.jobs, "submit", lambda *_: pytest.fail("must not submit"))
+    the_app.wheel.dropped.emit("tools.pdf.compress.custom", [tmp_path / "a.pdf"])
+    the_app._dialog.reject()
+
+
+def test_a_second_custom_drop_replaces_the_open_dialog(
+    the_app: App, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    submitted: list[tuple] = []
+    monkeypatch.setattr(the_app.jobs, "submit", lambda *a, **k: submitted.append(a) or "id")
+    the_app.wheel.dropped.emit("tools.image.compress.custom", [png(tmp_path / "a.png")])
+    first = the_app._dialog
+    the_app.wheel.dropped.emit("tools.image.compress.custom", [png(tmp_path / "b.png")])
+    assert the_app._dialog is not first
+    assert first.result() == first.DialogCode.Rejected
+    the_app._dialog.accept()
+    assert [s[1][0].name for s in submitted] == ["b.png"]  # one job, for the latest drop
+    assert the_app._dialog is None
