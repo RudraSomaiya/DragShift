@@ -91,7 +91,7 @@ def _rasterise(paths: list[Path], params: dict, ctx: "JobContext", ext: str) -> 
             if doc.page_count == 1:
                 folder, labels = None, [None]
             else:
-                folder = new_folder(src.with_name(f"{src.stem} pages"), ctx)
+                folder = new_folder(ctx.out_dir(src) / f"{src.stem} pages", ctx)
                 width = max(3, len(str(doc.page_count)))
                 labels = [f"{i + 1:0{width}d}" for i in range(doc.page_count)]
             for i in _pages(doc, ctx):

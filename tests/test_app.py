@@ -319,3 +319,58 @@ def test_the_dialog_gets_the_resolved_theme_and_follows_changes(
     appearance = replace(config.appearance, theme="dark" if dark else "light")
     the_app.on_config_changed(replace(config, appearance=appearance))
     assert dialog.theme.dark is dark
+
+
+def test_the_output_folder_setting_reaches_the_job(
+    the_app: App, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from dragshift.engine.jobs import OUTPUT_FOLDER
+
+    output = dataclasses.replace(
+        the_app.store.config.output, location="fixed_folder", fixed_folder=str(tmp_path)
+    )
+    the_app.store.update(dataclasses.replace(the_app.store.config, output=output))
+    submitted: list[tuple] = []
+    monkeypatch.setattr(the_app.jobs, "submit", lambda *a, **k: submitted.append(a) or "id")
+    the_app.wheel.dropped.emit("convert.image.jpg", [Path("C:/x/a.png")])
+    assert submitted[0][2][OUTPUT_FOLDER] == str(tmp_path)
+
+
+def test_settings_opens_once_and_add_opens_the_slot(the_app: App) -> None:
+    window = the_app.on_show_settings()
+    assert the_app.on_show_settings() is window
+    the_app.on_add_requested("sites", 3)
+    assert window.pages.currentWidget() is window.launcher
+    assert window.launcher.sites.currentRow() == 3
+    window.close()
+    assert the_app.settings is None
+
+
+def test_pause_from_the_tray_is_saved_and_shown(the_app: App) -> None:
+    the_app.tray.pause_toggled.emit(True)
+    assert the_app.store.config.general.paused
+    assert the_app.tray.pause_action.isChecked()
+
+
+def test_undo_from_the_tray_s_history(
+    the_app: App, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from dragshift.engine import jobs
+
+    trashed: list[Path] = []
+    monkeypatch.setattr(jobs, "_trash", trashed.extend)
+    out = tmp_path / "a.jpg"
+    out.write_bytes(b"x")
+    result = JobResult(
+        "convert.image.jpg",
+        [tmp_path / "a.png"],
+        [out],
+        True,
+        "",
+        {"type": "trash", "paths": [out]},
+    )
+    the_app.history.record("j1", result)
+    the_app.tray.history_action.emit("j1", "undo")
+    assert trashed == [out]
+    assert the_app.history.get("j1").undone
+    assert the_app.toasts.stack.get("j1").content.title == "Undone"

@@ -338,3 +338,24 @@ def test_sha256_lines_match_sha256sum(tmp_path: Path) -> None:
     result = run("sha256", [a, b])
     want = [f"{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}" for p in (a, b)]
     assert result["copied"] == "\n".join(want)
+
+
+def test_outputs_go_to_the_output_folder_from_settings(tmp_path: Path) -> None:
+    out = tmp_path / "out"
+    ctx = JobContext("job", folder=out)
+    src = make(tmp_path / "src" / "a.txt")
+    assert ctx.output_path(src, ext="zip").parent == out
+    assert ctx.out_dir(src) == out
+    assert JobContext("job").out_dir(src) == src.parent
+
+
+def test_submit_hands_the_output_folder_to_the_job_not_the_op(
+    qtbot, jm: JobManager, tmp_path: Path
+) -> None:
+    from dragshift.engine.jobs import OUTPUT_FOLDER
+
+    out = tmp_path / "out"
+    a = make(tmp_path / "a.txt")
+    result = submit(qtbot, jm, "actions.zip", [a], **{OUTPUT_FOLDER: str(out)})
+    assert result.ok, result.message
+    assert result.outputs == [out / "a.zip"]

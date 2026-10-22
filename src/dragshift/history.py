@@ -153,6 +153,13 @@ class History(QObject):
         self._save()
         return kept
 
+    def reset_usage(self) -> None:
+        """Forget the usage counts (Settings > Wheels, FR-8.1): petals go back to the pinned and
+        default order. The jobs stay, so Undo still works."""
+        if self._usage:
+            self._usage = {}
+            self._save()
+
     # --- file --------------------------------------------------------------------------------
     def _load(self) -> None:
         try:

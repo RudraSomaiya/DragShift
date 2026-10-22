@@ -132,3 +132,11 @@ def test_undo_sends_the_outputs_to_the_recycle_bin_once(
 def test_undo_of_an_unknown_job(path: Path) -> None:
     with pytest.raises(KeyError):
         History(path).undo("nope")
+
+
+def test_reset_usage_keeps_the_jobs(path: Path) -> None:
+    history = History(path)
+    history.record("j", JobResult("convert.image.png", [Path("C:/x/a.jpg")], [], True, "", {}))
+    history.reset_usage()
+    assert history.usage == {} and len(history.entries) == 1
+    assert json.loads(path.read_text(encoding="utf-8"))["usage"] == {}

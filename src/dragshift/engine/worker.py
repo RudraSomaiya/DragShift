@@ -128,8 +128,16 @@ class CancelDir:
 class JobContext:
     """Passed to every worker function. Picklable: it crosses into the worker process."""
 
-    def __init__(self, job_id: str, queue: Any = None, cancel_flags: Any = None) -> None:
+    def __init__(
+        self,
+        job_id: str,
+        queue: Any = None,
+        cancel_flags: Any = None,
+        folder: Path | None = None,
+    ) -> None:
         self.job_id = job_id
+        self.folder = folder  # Settings > Output > one folder for everything (FR-8.1); None: next
+        # to the source
         self._queue = queue  # .put((job_id, fraction, text)); None = this worker's queue
         self._cancel = cancel_flags if cancel_flags is not None else {}  # job_id in → cancelled
         self._slot = (0, 1)  # (file group index, group count) for overall progress
@@ -153,7 +161,7 @@ class JobContext:
         format to the writer explicitly, since the ``.part`` suffix hides the real extension.
         If the folder cannot be written to, the file is reserved in Downloads (FR-5.3).
         """
-        out_dir = folder if folder is not None else src.parent
+        out_dir = folder if folder is not None else self.out_dir(src)
         stem = src.name if src.is_dir() else src.stem
         ext = ext.lstrip(".")
         name = f"{stem}{f' {label}' if label else ''}{f'.{ext}' if ext else ''}"
@@ -161,6 +169,11 @@ class JobContext:
             return self.reserve(out_dir / name)
         except PermissionError:
             return self.reserve(self.redirect(out_dir / name))
+
+    def out_dir(self, src: Path) -> Path:
+        """Where ``src``'s outputs go: the output folder from Settings, else ``src``'s folder.
+        Ops that make a folder of outputs (``<stem> pages``) put it here too."""
+        return self.folder if self.folder is not None else src.parent
 
     def redirect(self, path: Path) -> Path:
         """FR-5.3: where ``path`` goes after its folder refused a write: the same name in
