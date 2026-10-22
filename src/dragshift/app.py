@@ -24,7 +24,7 @@ from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QApplication, QWidget
 
 from dragshift.config import Config, ConfigStore
-from dragshift.engine import presets, registry
+from dragshift.engine import presets, registry, variants
 from dragshift.engine.actions import files as actions
 from dragshift.engine.jobs import JobManager, JobResult
 from dragshift.gesture import GestureController
@@ -124,7 +124,7 @@ class App(QObject):
         output = self.store.config.output
         params = {"quality": output.jpeg_quality, "dpi": output.pdf_dpi}
         params |= actions.params_for(op_id)  # a Copy to / Move to ring: its folder
-        params |= presets.params_for(op_id)  # a Compress ring: its size preset (FR-4.3)
+        params |= variants.params_for(op_id)  # a ring Op: Compress preset (FR-4.3), Resize...
         if presets.is_compress(op_id):
             params["allow_format_change"] = output.allow_format_change_for_size  # §6.2 PNG→WebP
         if dialog is None:

@@ -1,4 +1,4 @@
-"""Video tools (PRD §6.2 video row): Compress ▸ presets.
+"""Video tools (PRD §6.2 video row): Compress ▸ presets, Mute, Extract audio, To GIF, Resize ▸.
 
 Compress is two-pass H.264 + AAC in MP4 at a bitrate computed from the duration and the target
 size (§6.2). Low bitrates also lower the resolution (``SIDES``), since a sharp 480p beats a
@@ -7,6 +7,10 @@ unknown, it falls back to one CRF pass, and the toast says how close it got (FR-
 lands a few % over on short clips, so a miss is encoded once more at a scaled-down bitrate
 (the last ``RETRY_SHARE`` of the progress bar).
 Output: ``<stem> Compressed.mp4``.
+
+Mute copies the picture as it is (``<stem> Muted.<ext>``). Extract audio writes M4A, copying AAC
+(``<stem> Audio.m4a``). To GIF is the Convert wheel's GIF. Resize ▸ shrinks the short side to 720
+or 1080 px at CRF 20, never enlarging (``<stem> 720p.mp4``).
 
 ffmpeg is only called inside the functions: the UI process imports this module to register Ops
 (CLAUDE.md rule 2).
@@ -17,9 +21,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from dragshift.engine.converters.media import EVEN_SIZE
+from dragshift.engine.converters.media import (
+    AUDIO_TARGETS,
+    EVEN_SIZE,
+    VIDEO_TARGETS,
+    audio_args,
+    convert_each,
+)
 from dragshift.engine.kinds import Kind
 from dragshift.engine.presets import Target, compress_op, retarget, size_note, target_for
+from dragshift.engine.registry import Op, op, register
+from dragshift.engine.variants import Choice, ring_op
 
 if TYPE_CHECKING:
     from dragshift.engine.ffmpeg import MediaInfo
@@ -138,5 +150,62 @@ def compress(paths: list[Path], params: dict, ctx: "JobContext") -> list[Path]:
                 return []
         ctx.progress(1.0, src.name)
         ctx.note(size_note(goal, dst.stat().st_size))
+        outputs.append(dst)
+    return outputs
+
+
+# --- Mute, Extract audio, To GIF, Resize ---------------------------------------------------
+_MUXERS = {"wmv": "asf", "m4v": "mp4"}  # containers VIDEO_TARGETS has no entry for
+
+
+@op(id="tools.video.mute", wheel="tools", label="Mute", kinds=frozenset({Kind.VIDEO}))
+def mute(paths: list[Path], params: dict, ctx: "JobContext") -> list[Path]:
+    from dragshift.engine import ffmpeg
+
+    outputs = []
+    for src in paths:
+        info = ffmpeg.probe(src)
+        if info.video is None:
+            raise ValueError("this file has no video track")
+        ext = src.suffix.lstrip(".").lower()
+        muxer = _MUXERS.get(ext) or VIDEO_TARGETS[ext].format
+        faststart = ["-movflags", "+faststart"] if muxer in ("mp4", "mov") else []
+        dst = ctx.output_path(src, ext=ext, label="Muted")
+        cmd = ["-i", str(src), "-map", "0:v", "-c:v", "copy", "-an", *faststart, "-f", muxer,
+               "-y", str(dst)]  # fmt: skip
+        if not ffmpeg.run(cmd, ctx, duration=info.duration, text=src.name):
+            return []  # cancelled: run_job deletes the .part
+        outputs.append(dst)
+    return outputs
+
+
+@op(id="tools.video.extract_audio", wheel="tools", label="Extract audio",
+    kinds=frozenset({Kind.VIDEO}))  # fmt: skip
+def extract_audio(paths: list[Path], params: dict, ctx: "JobContext") -> list[Path]:
+    return convert_each(paths, ctx, "m4a", lambda i: audio_args(i, AUDIO_TARGETS["m4a"]), "Audio")
+
+
+register(Op(id="tools.video.gif", wheel="tools", label="To GIF", kinds=frozenset({Kind.VIDEO}),
+            func="dragshift.engine.converters.media:video_to_gif"))  # fmt: skip
+
+
+@ring_op(
+    Kind.VIDEO, "resize", "Resize", [Choice(f"{s}p", f"{s}p", {"side": s}) for s in (720, 1080)]
+)
+def resize(paths: list[Path], params: dict, ctx: "JobContext") -> list[Path]:
+    from dragshift.engine import ffmpeg
+
+    side = int(params["side"])
+    outputs = []
+    for src in paths:
+        info = ffmpeg.probe(src)
+        if info.video is None:
+            raise ValueError("this file has no video track")
+        if info.width and info.height and min(info.width, info.height) <= side:
+            ctx.note(f"Already {side}p or smaller; not enlarged")
+        plan = Plan(None, 160 if info.audio else 0, crf=20, max_side=side)
+        dst = ctx.output_path(src, ext="mp4", label=f"{side}p")
+        if not _encode(src, dst, info, plan, ctx):
+            return []
         outputs.append(dst)
     return outputs
