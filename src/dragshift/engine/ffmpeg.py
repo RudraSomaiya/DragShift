@@ -40,6 +40,7 @@ class MediaInfo:
     height: int = 0
     pix_fmt: str = ""  # of that video stream, e.g. "yuv420p"
     deep_audio: bool = False  # lossless audio with more than 16 bits per sample
+    sample_rate: int = 0  # Hz of that audio stream; 0 when unknown
 
 
 # --- choosing a binary -----------------------------------------------------------------------
@@ -113,6 +114,7 @@ def parse_probe(text: str) -> MediaInfo:
     width = height = 0
     pix_fmt = ""
     deep = False
+    rate = 0
     for kind, codec, rest in _STREAM.findall(text):
         if kind == "Video" and video is None and "(attached pic)" not in rest:
             video = codec
@@ -122,10 +124,12 @@ def parse_probe(text: str) -> MediaInfo:
             pix_fmt = fields[1].partition("(")[0] if len(fields) > 1 else ""
         elif kind == "Audio" and audio is None:
             audio = codec
+            if hz := re.search(r", (\d+) Hz", rest):
+                rate = int(hz[1])
             deep = codec.startswith(("flac", "alac", "pcm")) and (
                 "(24 bit)" in rest or re.search(r", s32p?\b", rest) is not None
             )
-    return MediaInfo(duration or None, video, audio, width, height, pix_fmt, deep)
+    return MediaInfo(duration or None, video, audio, width, height, pix_fmt, deep, rate)
 
 
 def probe(src: Path) -> MediaInfo:

@@ -404,6 +404,7 @@ src/dragshift/
     registry.py       # Op dataclass, @op decorator, ops_for()
     jobs.py           # JobManager, JobContext, naming, .part writes, undo tokens
     presets.py        # size presets (FR-4.3)
+    variants.py       # @ring_op: Resize ▸ / Rotate ▸ / Bitrate ▸ outer rings and their params (§6.2)
     converters/ images.py  pdf.py  docs.py  media.py  sheets.py  subtitles.py  archives.py  office.py(stretch)
     tools/      image.py  pdf.py  video.py  audio.py
     actions/    files.py

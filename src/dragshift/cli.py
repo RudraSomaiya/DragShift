@@ -10,7 +10,7 @@ import signal
 import sys
 from pathlib import Path
 
-from dragshift.engine import presets, registry
+from dragshift.engine import registry, variants
 from dragshift.engine.registry import Op
 
 OK, FAILED, USAGE = 0, 1, 2
@@ -71,7 +71,8 @@ def tool(op_id: str, paths: list[str], preset: str | None) -> int:
         _err(f"{op_id} does not accept {', '.join(p.name for p in files)}")
         return USAGE
     # A preset ring Op (tools.video.compress.discord) carries its preset; --preset overrides.
-    params = presets.params_for(op_id) | ({"preset": preset} if preset else {})
+    params = variants.params_for(op_id)
+    params |= {"preset": preset} if preset else {}
     return run_op(found, files, params)
 
 

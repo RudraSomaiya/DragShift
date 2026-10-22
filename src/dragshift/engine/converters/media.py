@@ -133,14 +133,16 @@ def gif_args(info: "MediaInfo") -> tuple[list[str], set[str]]:
     return ["-map", "0:v:0", "-an", "-vf", graph, "-f", "gif"], {"gif"}
 
 
-def _convert(paths: list[Path], ctx: "JobContext", ext: str, build) -> list[Path]:
+def convert_each(
+    paths: list[Path], ctx: "JobContext", ext: str, build, label: str | None = None
+) -> list[Path]:
     from dragshift.engine import ffmpeg
 
     outputs = []
     for src in paths:
         info = ffmpeg.probe(src)
         args, needs = build(info)
-        dst = ctx.output_path(src, ext=ext)
+        dst = ctx.output_path(src, ext=ext, label=label)
         cmd = ["-i", str(src), *args, "-y", str(dst)]  # -y: dst is our own reserved .part
         if not ffmpeg.run(cmd, ctx, duration=info.duration, text=src.name, needs=needs):
             return []  # cancelled: run_job deletes the .part
@@ -149,11 +151,11 @@ def _convert(paths: list[Path], ctx: "JobContext", ext: str, build) -> list[Path
 
 
 def _audio(paths: list[Path], ctx: "JobContext", ext: str) -> list[Path]:
-    return _convert(paths, ctx, ext, lambda info: audio_args(info, AUDIO_TARGETS[ext]))
+    return convert_each(paths, ctx, ext, lambda info: audio_args(info, AUDIO_TARGETS[ext]))
 
 
 def _video(paths: list[Path], ctx: "JobContext", ext: str) -> list[Path]:
-    return _convert(paths, ctx, ext, lambda info: video_args(info, VIDEO_TARGETS[ext]))
+    return convert_each(paths, ctx, ext, lambda info: video_args(info, VIDEO_TARGETS[ext]))
 
 
 # --- Audio Ops, in default petal order (§6.1) ------------------------------------------------
@@ -215,12 +217,12 @@ def video_to_webm(paths: list[Path], params: dict, ctx: "JobContext") -> list[Pa
 
 @op(id="convert.video.gif", wheel="convert", label="GIF", kinds=VIDEO)
 def video_to_gif(paths: list[Path], params: dict, ctx: "JobContext") -> list[Path]:
-    return _convert(paths, ctx, "gif", gif_args)
+    return convert_each(paths, ctx, "gif", gif_args)
 
 
 @op(id="convert.video.mp3", wheel="convert", label="MP3", kinds=VIDEO)
 def video_to_mp3(paths: list[Path], params: dict, ctx: "JobContext") -> list[Path]:
-    return _convert(paths, ctx, "mp3", lambda info: audio_args(info, AUDIO_TARGETS["mp3"]))
+    return convert_each(paths, ctx, "mp3", lambda info: audio_args(info, AUDIO_TARGETS["mp3"]))
 
 
 @op(id="convert.video.avi", wheel="convert", label="AVI", kinds=VIDEO, hide_if_same_ext="avi")
