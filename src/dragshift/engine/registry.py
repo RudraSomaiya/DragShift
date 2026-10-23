@@ -2,7 +2,7 @@
 
 Ops are declared next to their worker function with ``@op``. Op modules MUST import engine
 libraries (Pillow, fitz, …) inside the function bodies, never at module level: the UI process
-imports them to build its wheels (CLAUDE.md rule 2).
+imports them to build its wheels (CONTRIBUTING.md rule 2).
 """
 
 import importlib

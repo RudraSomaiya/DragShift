@@ -7,7 +7,7 @@ always to a rotating file (FR-6.1, FR-6.5), autostart kept in step with the conf
 and a toast (FR-5.5, FR-5.7); their usage counts reorder the petals (FR-2.2). The tray (FR-7.1)
 opens Settings (FR-8.1), the History menu, Pause and the log folder.
 
-UI-process module: it must never import an engine library (CLAUDE.md rule 2).
+UI-process module: it must never import an engine library (CONTRIBUTING.md rule 2).
 """
 
 import dataclasses

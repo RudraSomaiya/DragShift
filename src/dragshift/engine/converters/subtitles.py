@@ -5,7 +5,7 @@ SRT files. Output is UTF-8. TXT is the spoken text only: one line per cue, styli
 comment lines skipped.
 
 pysubs2 is imported inside the functions: the UI process imports this module to register Ops
-(CLAUDE.md rule 2).
+(CONTRIBUTING.md rule 2).
 """
 
 from pathlib import Path

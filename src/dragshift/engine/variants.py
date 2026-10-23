@@ -4,7 +4,7 @@
 worker function. The worker reads the choice from its params (``params_for`` gives them from the
 Op's id, Compress presets included; a drop on the parent itself runs the ``default`` choice).
 
-Pure Python: the UI process imports this module to register Ops (CLAUDE.md rule 2).
+Pure Python: the UI process imports this module to register Ops (CONTRIBUTING.md rule 2).
 """
 
 from collections.abc import Callable, Sequence

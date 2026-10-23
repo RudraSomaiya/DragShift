@@ -11,7 +11,7 @@ per page into a folder ``<stem> split`` (``<stem> 001.pdf``, …). Rotate ▸ tu
 (``<stem> Stripped.pdf``). All save with ``garbage=4, deflate=True``.
 
 PyMuPDF is imported inside the functions: the UI process imports this module to register Ops
-(CLAUDE.md rule 2).
+(CONTRIBUTING.md rule 2).
 """
 
 from pathlib import Path

@@ -9,7 +9,7 @@ render is Pillow's, in a worker, from the same numbers.
 
 The preview is decoded by Qt, so HEIC and AVIF show "No preview" but can still be saved.
 
-UI-process module: it must never import an engine library (CLAUDE.md rule 2).
+UI-process module: it must never import an engine library (CONTRIBUTING.md rule 2).
 """
 
 import math

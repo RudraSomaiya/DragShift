@@ -5,7 +5,7 @@
   and Details, which copies the error and the log path (FR-5.5). A cancelled job's toast goes.
 - Undo goes through History, so the tray's History knows the job was undone (FR-5.6, FR-5.7).
 
-UI-process module: no engine libraries (CLAUDE.md rule 2).
+UI-process module: no engine libraries (CONTRIBUTING.md rule 2).
 """
 
 import dataclasses

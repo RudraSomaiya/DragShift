@@ -6,7 +6,7 @@ Quit.
 - The icon is drawn here (a wheel in the accent colour), grey while gestures are paused.
 - A click on the icon opens Settings.
 
-UI-process module: it must never import an engine library (CLAUDE.md rule 2).
+UI-process module: it must never import an engine library (CONTRIBUTING.md rule 2).
 """
 
 import math

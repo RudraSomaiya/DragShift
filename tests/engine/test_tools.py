@@ -36,7 +36,7 @@ def run(op_id: str, sources: list[Path], params: dict | None = None) -> dict:
     result = run_job(
         found.func, groups, variants.params_for(op_id) | (params or {}), JobContext("t")
     )
-    assert [sha(s) for s in sources] == before  # CLAUDE.md rule 4
+    assert [sha(s) for s in sources] == before  # CONTRIBUTING.md rule 4
     result["outputs"] = [part.rename(final_path(part)) for part in result["outputs"]]
     return result
 

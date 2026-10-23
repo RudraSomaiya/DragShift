@@ -8,7 +8,7 @@
 - Subtitles, data tracks and cover art are not carried over.
 
 ffmpeg is only called inside the functions: the UI process imports this module to register Ops
-(CLAUDE.md rule 2).
+(CONTRIBUTING.md rule 2).
 """
 
 from dataclasses import dataclass, replace

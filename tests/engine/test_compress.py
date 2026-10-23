@@ -39,7 +39,7 @@ def run(kind: str, src: Path, params: dict, ctx: JobContext | None = None) -> di
     before = sha(src)
     result = run_job(f"dragshift.engine.tools.{kind}:compress", [[src]], params,
                      ctx or JobContext("t"))  # fmt: skip
-    assert sha(src) == before  # CLAUDE.md rule 4
+    assert sha(src) == before  # CONTRIBUTING.md rule 4
     result["outputs"] = [part.rename(final_path(part)) for part in result["outputs"]]
     return result
 

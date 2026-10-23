@@ -7,7 +7,7 @@ ODT RTF, minus the source's own format. PDF output needs Office or LibreOffice (
   PATH is used only if the bundled one is missing. It runs as a subprocess that a cancel kills.
 - TXT input is read literally by ``lua/plain_reader.lua``: pandoc has no plain-text reader, and
   reading it as Markdown would turn ``*stars*`` into italics.
-- Offline (CLAUDE.md rule 7): pandoc downloads remote images to embed or extract them, so it runs
+- Offline (CONTRIBUTING.md rule 7): pandoc downloads remote images to embed or extract them, so it runs
   with its proxy set to an address Windows refuses at once. Every fetch fails without touching
   the network, and pandoc puts the image's alt text in its place.
 - Images inside a DOCX, ODT, EPUB or RTF source go to a ``<stem> media`` folder next to an MD or

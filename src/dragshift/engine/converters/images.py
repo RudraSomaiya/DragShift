@@ -5,7 +5,7 @@ several images. Every input in §6.1 is read: HEIC/HEIF through pillow-heif, AVI
 Pillow, and SVG rasterised with QtSvg at 2x. Animated and multi-page inputs use their first frame.
 
 Pillow, pillow-heif and Qt are imported inside the functions: the UI process imports this module
-to register Ops (CLAUDE.md rule 2).
+to register Ops (CONTRIBUTING.md rule 2).
 """
 
 import re

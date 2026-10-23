@@ -15,14 +15,11 @@ A free, open-source Windows take on Tangerine for Mac. Everything runs on your o
 
 </div>
 
-> [!NOTE]
-> DragShift is in Sprint 1, working towards `v0.1.0`. The gesture, the glass wheel, Quick Launch and most converters work today. The Tools and Actions petals, toasts with Undo, and the tray and Settings window are still being built. [What works today](#what-works-today) has the details.
-
 ## About
 
 Converting a file on Windows usually means opening an app or a website, uploading the file, picking a format, downloading the result and moving it back where it belongs. Online converters also send private files to servers you know nothing about.
 
-Tangerine for Mac solved this with a gesture. You start dragging a file, tap a modifier key, and a radial wheel opens around the cursor. You drop the file on a petal, and the new file appears next to the original. DragShift brings that gesture to Windows as a lightweight background app written in Python and Qt. It also adds **Quick Launch**: tap Shift or Ctrl on an empty desktop to open a wheel of your favourite apps or websites.
+Tangerine for Mac solved this with a gesture. You start dragging a file, tap a modifier key, and a radial wheel opens around the cursor. You drop the file on a petal, and the new file appears next to the original. DragShift brings that gesture to Windows as a small background app. It also adds **Quick Launch**: tap Shift or Ctrl on an empty desktop to open a wheel of your favourite apps or websites.
 
 DragShift is a clean-room re-implementation. It copies no code or assets from Tangerine.
 
@@ -32,29 +29,49 @@ DragShift is a clean-room re-implementation. It copies no code or assets from Ta
 
 | You do this | You get |
 |---|---|
-| Drag a file and tap **Shift** | The **Convert** wheel: PNG, JPG, WEBP, PDF, MP4, MP3, CSV, ZIP… |
+| Drag a file and tap **Shift** | The **Convert** wheel: PNG, JPG, WEBP, PDF, DOCX, MP4, MP3, CSV, ZIP… |
 | Drag a file and tap **Ctrl** | The **Tools** wheel: compress with size presets, crop, add a background, resize, rotate… |
 | Drag a file and tap **Alt** | The **Actions** wheel: copy path, open a terminal here, copy or move to a pinned folder, zip… |
 | Tap **Shift** on an empty desktop | **Quick Launch**: up to 8 of your apps |
 | Tap **Ctrl** on an empty desktop | **Quick Launch**: up to 8 of your websites |
 
-While a wheel is open you can tap a different key to swap wheels. Press **Esc**, or drop anywhere outside a petal, and nothing happens. The output is written next to the source, as `photo.jpg` for a convert or `clip Compressed.mp4` for a tool, and an existing file is never overwritten: a clash becomes `photo (2).jpg`.
+While a wheel is open you can tap a different key to swap wheels. Press **Esc**, or drop anywhere outside a petal, and nothing happens. The new file is written next to the source, as `photo.jpg` for a convert or `clip Compressed.mp4` for a tool, and an existing file is never overwritten: a clash becomes `photo (2).jpg`.
 
-<!--
-Demo GIFs (DS-30). Record them with ScreenToGif at 1280x720 or smaller, keep each under 5 MB,
-save them in docs/media/ and replace this comment with:
+When a job finishes, a small toast offers **Open**, **Show** and **Undo**. Undo sends the new file to the Recycle Bin. The last 20 jobs are under **History** in the tray menu, and you can undo them from there too. Petals you use often move to the front of the wheel.
 
-<table>
-  <tr>
-    <td align="center"><img src="docs/media/convert.gif" width="420" alt="Dragging a JPG, tapping Shift and dropping it on PNG"><br><sub>Convert a photo</sub></td>
-    <td align="center"><img src="docs/media/swap.gif" width="420" alt="Swapping between the Convert, Tools and Actions wheels during one drag"><br><sub>Swap wheels mid-drag</sub></td>
-  </tr>
-  <tr>
-    <td align="center"><img src="docs/media/quick-launch.gif" width="420" alt="Tapping Shift on the desktop and launching VS Code"><br><sub>Quick Launch</sub></td>
-    <td align="center"><img src="docs/media/compress.gif" width="420" alt="Compressing a video to the Discord preset"><br><sub>Compress for Discord</sub></td>
-  </tr>
-</table>
--->
+### What it can do
+
+These are the petals each wheel offers. A target in the same format as the file is hidden, so a PNG has no "PNG" petal.
+
+**Convert (Shift)**
+
+| Input | Targets |
+|---|---|
+| **Image**: jpg png webp heic avif tiff bmp gif ico, svg (input only) | JPG PNG WEBP HEIC AVIF PDF TIFF BMP ICO |
+| **Several images** | Merge to PDF |
+| **PDF** | DOCX PNG JPG TXT MD PPTX (one image per page, in a folder) |
+| **Document**: docx md txt html epub odt rtf | DOCX MD TXT HTML EPUB ODT RTF |
+| **Spreadsheet**: xlsx xls ods csv tsv | XLSX CSV TSV ODS |
+| **Audio**: mp3 m4a wav flac ogg opus aiff wma aac | MP3 M4A WAV FLAC OGG OPUS AIFF |
+| **Video**: mp4 mov mkv webm avi wmv m4v | MP4 MOV MKV WEBM AVI GIF MP3 |
+| **Subtitle**: srt vtt ass ssa | SRT VTT ASS TXT |
+| **Archive**: zip tar gz tgz rar 7z | Extract here, ZIP, TAR.GZ |
+| **Folder** | ZIP |
+
+**Tools (Ctrl)**
+
+| Input | Tools |
+|---|---|
+| **Image** | Compress, Crop, Add BG, Resize (50 %, 1080p, 4K), Rotate and flip, Strip metadata |
+| **PDF** | Compress, Merge, Split, Rotate, Strip metadata |
+| **Video** | Compress, Mute, Extract audio, To GIF, Resize (720p, 1080p) |
+| **Audio** | Compress, Bitrate (96 to 320 kbps), Normalize |
+
+Hovering **Compress** opens a ring of size presets: **Email 25 MB**, **WhatsApp 16 MB**, **Discord 10 MB**, **Small** (half the size) and **Custom…**. DragShift encodes the file to fit under the size you picked, and tells you if it can't.
+
+**Crop** and **Add BG** open a small glass editor first. Crop has free and fixed ratios (1:1, 16:9, 9:16, 4:3, 3:4) and exact width and height fields. Add BG puts the image on a gradient, a solid colour or another picture, with sliders for padding, corner radius and shadow.
+
+**Actions (Alt)**: Copy path, Copy name, Terminal (opens Windows Terminal or PowerShell in that folder), Copy to and Move to one of up to four pinned folders, Zip, and Copy SHA-256. These also work on folders.
 
 ### Quick Launch
 
@@ -69,83 +86,63 @@ A **tap** is a key going down and up within 300 ms with nothing else pressed in 
 - The app in front is not on your blocklist.
 - Gestures are not paused.
 
-If single taps still trigger by accident, switch `keys.tap_mode` to `"double"` in the config.
-
-## What works today
-
-| Feature | Status | Story |
-|---|---|---|
-| Drag + Shift/Ctrl/Alt opens a wheel; swap, Esc, 30 s timeout | ✅ Done | DS-10, DS-11 |
-| Glass wheel with light and dark mode, the Windows accent colour and reduced motion | ✅ Done | DS-9, DS-12 |
-| Convert: images, audio, video, spreadsheets, subtitles, archives, folders | ✅ Done | DS-13, DS-14, DS-20 |
-| Quick Launch: tap detection, context checks, Apps and Sites wheels | ✅ Done | DS-15, DS-19 |
-| Single instance, `--background`, log file, autostart, command line | ✅ Done | DS-26 |
-| Convert: PDF and documents (DOCX, Markdown, HTML, EPUB…) | 🚧 In progress | DS-16, DS-17 |
-| Toasts with Open / Show / Undo, job history, smart petal order | 🚧 In progress | DS-18 |
-| Tools wheel: compress with size presets, resize, rotate, PDF merge and split… | 🚧 In progress | DS-22, DS-23 |
-| Actions wheel: copy path, terminal here, copy/move to pinned folders, SHA-256 | 🚧 In progress | DS-21 |
-| Crop and Add BG dialogs | 🚧 In progress | DS-24, DS-27, DS-28 |
-| Tray icon and Settings window | 🚧 In progress | DS-25 |
-
-### Conversions
-
-These are the Convert-wheel targets that are built. A target in the same format as the file is hidden, so a PNG has no "PNG" petal.
-
-| Input | Targets | Engine |
-|---|---|---|
-| **Image**: jpg png webp heic avif tiff bmp gif ico, svg (input only) | JPG PNG WEBP HEIC AVIF PDF TIFF BMP ICO | Pillow, pillow-heif |
-| **Several images** | Merge to PDF | Pillow |
-| **Audio**: mp3 m4a wav flac ogg opus aiff wma aac | MP3 M4A WAV FLAC OGG OPUS AIFF | ffmpeg |
-| **Video**: mp4 mov mkv webm avi wmv m4v | MP4 MOV MKV WEBM GIF MP3 AVI | ffmpeg |
-| **Spreadsheet**: xlsx xls ods csv tsv | XLSX CSV TSV ODS | pandas, openpyxl, odfpy, xlrd |
-| **Subtitle**: srt vtt ass ssa | SRT VTT ASS TXT | pysubs2 |
-| **Archive**: zip tar gz tgz rar 7z | Extract here, ZIP, TAR.GZ | `zipfile`, `tarfile`, Windows `tar.exe` |
-| **Folder** | ZIP | `zipfile` |
-
-The full plan, including PDF, documents and every tool, is in [PRD §6](docs/PRD.md#6-conversion--tool-matrix).
+Pick a slot with a click or the keys **1** to **8**. If single taps still trigger by accident, switch to double-tap under **Settings → Keys**.
 
 ## Getting started
 
 ### Requirements
 
-- Windows 11 (23H2 or newer) or Windows 10 22H2, x64.
+- Windows 11, or Windows 10 22H2, on x64.
 - [uv](https://docs.astral.sh/uv/getting-started/installation/). It installs Python 3.12 for you if you don't have it.
-- Git.
 
-You don't need ffmpeg or pandoc. They come bundled through `imageio-ffmpeg` and `pypandoc-binary`. If ffmpeg is already on your `PATH`, DragShift uses that one.
+You don't need ffmpeg or pandoc. They come bundled with DragShift. If ffmpeg is already on your `PATH`, DragShift uses that one.
 
 ### Install
 
+Open PowerShell and run:
+
 ```powershell
-git clone https://github.com/RudraSomaiya/DragShift.git
-cd DragShift
-uv sync
+uv tool install git+https://github.com/RudraSomaiya/DragShift
 ```
+
+This puts a `dragshift` command on your `PATH`. If PowerShell says it can't find it, run `uv tool update-shell` once and open a new window. The first install downloads about 350 MB of libraries (Qt, PyMuPDF, pandas, ffmpeg and pandoc) and takes about 1 GB on disk.
 
 ### Run
 
 ```powershell
-uv run dragshift                 # in this console, with logs; Ctrl+C quits
-uv run dragshift --background    # detached, with no console window
+dragshift --background    # starts in the background, with no console window
+dragshift                 # or run it in this console, with logs; Ctrl+C quits
 ```
 
-Then drag any file from the desktop or Explorer and tap **Shift**. Only one copy runs at a time. Starting a second one hands over to the first and exits.
+A DragShift icon appears in the system tray. Drag any file from the desktop or Explorer and tap **Shift**. Only one copy runs at a time, so starting it again does nothing.
 
-Until the tray icon arrives (DS-25), stop a background copy from PowerShell:
+To start DragShift every time you sign in, open **Settings → General** from the tray icon and tick **Start DragShift when I sign in**.
+
+### Update and uninstall
 
 ```powershell
-Get-CimInstance Win32_Process -Filter "Name='pythonw.exe'" |
-  Where-Object CommandLine -like '*dragshift*' |
-  Invoke-CimMethod -MethodName Terminate
+uv tool upgrade dragshift       # get the latest version
+uv tool uninstall dragshift     # remove it
 ```
 
-### Start with Windows
+Before you uninstall, untick **Start DragShift when I sign in** and quit DragShift from the tray, or Windows will try to start a program that no longer exists. Your settings stay in `%APPDATA%\DragShift` until you delete that folder.
 
-Set `"autostart": true` under `general` in the config file and restart DragShift. It adds `DragShift` to `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, pointing at the project's own `pythonw.exe`. Set it back to `false` to remove the entry.
+## Settings
 
-## Configuration
+Right-click the tray icon and choose **Settings…**. Every change applies at once.
 
-DragShift keeps everything in two places:
+| Tab | What you can change |
+|---|---|
+| **Keys** | Which key opens which wheel, single tap or double tap |
+| **Wheels** | Pin petals to the front, or reset the usage counts that order them |
+| **Launcher** | The 8 app slots and 8 site slots. Drop a file on a slot, or pick from your Start menu apps |
+| **Appearance** | Light, dark or system theme, the accent colour, reduced motion |
+| **Output** | Where new files go, JPEG and WebP quality, and the resolution of PDF pages turned into images |
+| **General** | Start at sign-in, Quick Launch on or off, the blocklist, trimming memory when idle |
+
+The tray menu also has **History**, **Pause gestures** and **Open log folder**.
+
+DragShift keeps its files in three places:
 
 | What | Where |
 |---|---|
@@ -153,62 +150,20 @@ DragShift keeps everything in two places:
 | Site icons (fetched once per site) | `%APPDATA%\DragShift\icons\` |
 | Logs (1 MB × 3, rotating) | `%LOCALAPPDATA%\DragShift\logs\dragshift.log` |
 
-The file is created with defaults on the first run. Until the Settings window lands, edit it by hand and restart DragShift. If the file is broken, DragShift saves it as `config.bad.json` and starts with defaults, so a typo never stops the app.
-
-A Quick Launch setup looks like this:
-
-```json
-{
-  "version": 1,
-  "keys": { "convert": "shift", "tools": "ctrl", "actions": "alt",
-            "launch_apps": "shift", "launch_sites": "ctrl", "tap_mode": "single" },
-  "launcher": {
-    "enabled": true,
-    "apps": [
-      { "label": "VS Code",   "target": "shell:AppsFolder\\Microsoft.VisualStudioCode" },
-      { "label": "Terminal",  "target": "Microsoft.WindowsTerminal_8wekyb3d8bbwe!App" },
-      { "label": "",          "target": "C:\\Windows\\notepad.exe" },
-      { "label": "Downloads", "target": "%USERPROFILE%\\Downloads" }
-    ],
-    "sites": [
-      { "label": "GitHub",  "url": "github.com" },
-      { "label": "YouTube", "url": "youtube.com" }
-    ]
-  },
-  "appearance": { "theme": "system", "accent": "system", "reduced_motion": "system" },
-  "general": { "autostart": false, "paused": false, "blocklist": [] }
-}
-```
-
-- An app `target` can be an `.exe`, an `.lnk` shortcut, a folder, or a Store app ID. To find a Store app's ID, run `Get-StartApps` in PowerShell. Leave `label` empty to use the app's own name.
-- `theme` is `system`, `light` or `dark`. `accent` is `system` or a colour like `"#4C8DFF"`.
-- `blocklist` takes process names, such as `"code.exe"`, where Quick Launch should never open.
-- Every key and its default is in [PRD §10.1](docs/PRD.md#101-appdatadragshiftconfigjson-schema-v1).
+If `config.json` is ever broken, DragShift saves it as `config.bad.json` and starts with defaults, so a typo never stops the app. Every key and its default is listed in [PRD §10.1](docs/PRD.md#101-appdatadragshiftconfigjson-schema-v1).
 
 ## Command line
 
-The same operations run headless, which is handy for scripts and tests:
+The same operations run without the wheel, which is handy for scripts:
 
 ```powershell
-uv run dragshift ops photo.png                       # list what the wheels would offer
-uv run dragshift convert photo.png --to jpg          # writes photo.jpg next to it
-uv run dragshift convert a.jpg b.jpg --to "merge to pdf"
-uv run dragshift tool tools.video.compress clip.mp4 --preset discord   # once DS-22 lands
+dragshift ops photo.png                          # list what the wheels would offer
+dragshift convert photo.png --to jpg             # writes photo.jpg next to it
+dragshift convert a.jpg b.jpg --to "merge to pdf"
+dragshift tool tools.video.compress clip.mp4 --preset discord
 ```
 
-Output paths are printed one per line. The exit code is `0` on success, `1` if the operation failed, and `2` for bad usage. For example, `ops` on a PNG prints:
-
-```
-convert:
-  convert.image.jpg            JPG
-  convert.image.webp           WEBP
-  convert.image.heic           HEIC
-  convert.image.avif           AVIF
-  convert.image.pdf            PDF
-  convert.image.tiff           TIFF
-  convert.image.bmp            BMP
-  convert.image.ico            ICO
-```
+Output paths are printed one per line. The exit code is `0` on success, `1` if the operation failed, and `2` for bad usage.
 
 ## Your files are safe
 
@@ -225,7 +180,7 @@ DragShift never changes, moves or deletes the file you drag:
 
 <img src="docs/images/lean-ui-heavy-workers.png" alt="A small always-on process hands heavy jobs to short-lived workers" width="880">
 
-DragShift runs as one small, always-on UI process. Heavy libraries such as Pillow, PyMuPDF and pandas are never loaded in it. When you drop a file, a short-lived worker process does the conversion and quits after 60 seconds with no work, so an idle DragShift has no workers at all.
+DragShift runs as one small, always-on UI process written in Python with Qt Widgets (PySide6). Heavy libraries such as Pillow, PyMuPDF and pandas are never loaded in it. When you drop a file, a worker process does the conversion and quits after 60 seconds with no work. An idle DragShift uses about 40 MB of memory and has no workers running.
 
 ```mermaid
 flowchart LR
@@ -240,7 +195,7 @@ flowchart LR
     E -- "*.part, then rename" --> O["photo.jpg<br>next to the source"]
 ```
 
-The hook callbacks do almost nothing: they push the event to the Qt thread and pass it on to Windows, so DragShift never slows down or swallows your input. The glass look is a blurred snapshot of the screen behind the wheel, rendered once per opening with QPainter.
+The hook callbacks do almost nothing: they pass the event to the Qt thread and hand it straight back to Windows, so DragShift never slows down or swallows your input. A watchdog re-installs the hooks if Windows drops them. The glass look is a blurred snapshot of the screen behind the wheel, drawn once each time the wheel opens.
 
 [`docs/architecture.md`](docs/architecture.md) covers the gesture state machine, the drop handshake with Explorer, the glass recipe and how to add a new operation.
 
@@ -249,43 +204,46 @@ The hook callbacks do almost nothing: they push the event to the Qt thread and p
 ```
 DragShift/
 ├── src/dragshift/
-│   ├── __main__.py          CLI entry point: run, --background, ops, convert, tool
-│   ├── app.py               Wires hooks, gesture, wheels and jobs together
+│   ├── __main__.py          Command line: run, --background, ops, convert, tool
+│   ├── app.py               Wires hooks, gesture, wheels, jobs and the tray together
 │   ├── gesture.py           The gesture state machine
 │   ├── config.py            config.json schema, load, save and migrate
+│   ├── history.py           Job history, undo and usage counts
 │   ├── platform/            Win32: hooks, drag detection, Explorer COM, DWM, autostart
-│   ├── ui/                  Glass wheel, launcher wheel, theme and geometry
-│   ├── engine/              Kinds, Op registry, job manager, worker, converters
+│   ├── ui/                  Glass wheel, dialogs, toasts, tray and Settings
+│   ├── engine/              Op registry, job manager, worker, converters, tools, actions
 │   └── launcher/            Quick Launch apps, sites and favicon cache
 ├── tests/                   pytest and pytest-qt; fixtures are generated at test time
-├── spikes/                  Day-1 prototypes for hooks and the glass wheel
 ├── docs/
-│   ├── PRD.md               The spec, and the source of truth
+│   ├── PRD.md               The spec
 │   ├── architecture.md      How the pieces fit together
 │   └── manual-test-checklist.md
-├── CLAUDE.md                Rules for Claude Code agents working in this repo
+├── CONTRIBUTING.md          Commands, rules and the Git workflow
 └── pyproject.toml
 ```
 
 ## Development
 
 ```powershell
+git clone https://github.com/RudraSomaiya/DragShift.git
+cd DragShift
 uv sync                                   # includes the dev tools
+uv run dragshift                          # run from the clone, with logs
 uv run pytest -q                          # tests
 uv run ruff check . ; uv run ruff format .
 ```
 
-CI runs ruff and pytest on `windows-latest` for every pull request. A test checks that the UI process never imports Pillow, PyMuPDF, pandas, numpy, pdf2docx or pypandoc.
+CI runs ruff and pytest on `windows-latest` for every pull request. A test starts the app in a subprocess and fails if the UI process ever loads Pillow, PyMuPDF, pandas, numpy, pdf2docx or pypandoc.
 
-The project follows a one-week Scrum sprint with Jira (project key `DS`). `main` is protected: every change is a pull request from a `<type>/DS-<n>-<slug>` branch, with Conventional Commit messages such as `feat(engine): add HEIC to JPG [DS-13]`, one approval and a green CI run. Read [`docs/PRD.md`](docs/PRD.md) before changing behaviour, and tick the items you touched in [`docs/manual-test-checklist.md`](docs/manual-test-checklist.md) in your PR. Both of us build with Claude Code, and [`CLAUDE.md`](CLAUDE.md) has the rules it follows here.
+`main` is protected: every change is a pull request with one approval and a green CI run. [`CONTRIBUTING.md`](CONTRIBUTING.md) has the rules every change must follow, and [`docs/manual-test-checklist.md`](docs/manual-test-checklist.md) is the list we check by hand before a release.
 
 ## Known limitations
 
 - Windows only. There are no plans for macOS (use Tangerine) or Linux.
-- There is no installer or `.exe` yet. You run it from a clone with `uv`.
+- There is no `.exe` installer. You install it with `uv`.
 - Only real files and folders work. Text, images dragged from a browser, and Outlook attachments without a path show "Unsupported".
-- If the window you drag from runs as administrator, Windows blocks the drop into a normal-user app (UIPI). DragShift does not try to work around this.
-- Office → PDF needs Microsoft Office or LibreOffice and is a stretch goal for `v0.1.0`.
+- If the window you drag from runs as administrator, Windows blocks the drop into a normal app (this is called UIPI). DragShift does not try to get around it.
+- Office files (Word, Excel, PowerPoint) can't be turned into PDF yet. That needs Microsoft Office or LibreOffice and is planned for a later version.
 
 ## Credits
 
@@ -302,7 +260,7 @@ Made by Rudra Somaiya and Preeyas Tumulu.
 | | |
 |---|---|
 | **Rudra Somaiya**<br><sub>Platform: hooks, gesture, Explorer, Quick Launch, app shell</sub> | [![GitHub][badge-github-rudra]][link-github-rudra] [![LinkedIn][badge-linkedin-rudra]][link-linkedin-rudra] |
-| **Preeyas Tumulu**<br><sub>UI and engine: glass wheel, theme, registry, converters</sub> | [![GitHub][badge-github-preeyas]][link-github-preeyas] [![LinkedIn][badge-linkedin-preeyas]][link-linkedin-preeyas] |
+| **Preeyas Tumulu**<br><sub>UI and engine: glass wheel, converters, tools, dialogs</sub> | [![GitHub][badge-github-preeyas]][link-github-preeyas] [![LinkedIn][badge-linkedin-preeyas]][link-linkedin-preeyas] |
 
 [badge-python]: https://img.shields.io/badge/Python-3.12-3776AB?style=for-the-badge&logo=python&logoColor=white
 [badge-qt]: https://img.shields.io/badge/PySide6-Qt_Widgets-41CD52?style=for-the-badge&logo=qt&logoColor=white

@@ -73,7 +73,7 @@ def run(ext: str, src: Path, ctx: JobContext | None = None) -> dict:
     """Run an Op the way the pool does, check the source is untouched, finish the outputs."""
     before = sha(src)
     result = run_job(f"{MODULE}:{FUNCS[ext]}", [[src]], {}, ctx or JobContext("t"))
-    assert sha(src) == before  # CLAUDE.md rule 4
+    assert sha(src) == before  # CONTRIBUTING.md rule 4
     result["outputs"] = [
         part.rename(final_path(part)) if part.suffix == ".part" else part
         for part in result["outputs"]
@@ -257,7 +257,7 @@ def image_server() -> Iterator[tuple[str, list[str]]]:
 def test_remote_images_are_never_fetched(
     tmp_path: Path, image_server: tuple[str, list[str]], target: str
 ) -> None:
-    """CLAUDE.md rule 7: writers that embed images would download remote ones."""
+    """CONTRIBUTING.md rule 7: writers that embed images would download remote ones."""
     url, hits = image_server
     src = tmp_path / "doc.md"
     src.write_text(

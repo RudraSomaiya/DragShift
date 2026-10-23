@@ -4,7 +4,7 @@ behind it, and the styled controls the dialogs share.
 On Windows 10, or if DWM refuses the backdrop, the window paints an opaque panel instead
 (``#F3F5F9`` light, ``#1B1F27`` dark, at 96 % alpha).
 
-UI-process module: it must never import an engine library (CLAUDE.md rule 2).
+UI-process module: it must never import an engine library (CONTRIBUTING.md rule 2).
 """
 
 from PySide6.QtCore import QRectF, Qt, Signal

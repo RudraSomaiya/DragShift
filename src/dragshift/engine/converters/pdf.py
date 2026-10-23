@@ -6,7 +6,7 @@ more pages go into a new ``<stem> pages`` folder as ``<stem> 001.png``, … (FR-
 one page image per slide. No OCR: a scanned page gives no text.
 
 PyMuPDF, pdf2docx, pymupdf4llm and python-pptx are imported inside the functions: the UI process
-imports this module to register Ops (CLAUDE.md rule 2).
+imports this module to register Ops (CONTRIBUTING.md rule 2).
 """
 
 import io

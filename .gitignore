@@ -25,3 +25,8 @@ Desktop.ini
 
 # Private team notes (shared outside the repo)
 private/
+
+# Local assistant config and notes
+.claude/
+CLAUDE.md
+CLAUDE.local.md

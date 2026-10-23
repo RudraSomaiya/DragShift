@@ -1,4 +1,4 @@
-"""The wheel must not pull engine libraries into the UI process (NFR-1, CLAUDE.md rule 2)."""
+"""The wheel must not pull engine libraries into the UI process (NFR-1, CONTRIBUTING.md rule 2)."""
 
 import subprocess
 import sys

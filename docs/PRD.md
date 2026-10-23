@@ -5,13 +5,13 @@
 | Product | **DragShift**: drag a file, tap a key, and convert or act on it from a glass wheel. For Windows. |
 | Status | **Approved for Sprint 1** |
 | Version | 1.0 (19 Oct 2026) |
-| Team | 2 developers: **Dev A (Platform)** and **Dev B (UI + Engine)**. Both use Claude Code. |
+| Team | 2 developers: **Dev A (Platform)** and **Dev B (UI + Engine)**. |
 | Sprint | **Sprint 1**: Day 1 = Tue 20 Oct 2026 → Day 7 = Mon 26 Oct 2026 |
 | License | **AGPL-3.0** (required because the project uses PyMuPDF) |
 | Repo | `github.com/RudraSomaiya/DragShift` · Jira project key **`DS`** |
 | Inspiration | [Tangerine for Mac](https://tangerineformac.com/) (a clean-room re-implementation. We copy no code or assets.) |
 
-> **How to use this document (humans and AI agents):**
+> **How to use this document (read this first):**
 > - This is the single source of truth for *what* we build and *how it must behave*.
 > - Every requirement has an ID: **FR-x** for functional requirements, **NFR-x** for non-functional ones, and **DS-x** for stories.
 > - When you implement a story, read its row in §12 and the FRs it references, and keep to the interfaces in §9.
@@ -51,7 +51,7 @@
 
 ## 2. Goals, non-goals, success metrics
 
-### 2.1 Goals (Sprint 1 / v0.1.0)
+### 2.1 Goals (Sprint 1 / v1.0.0)
 - **G1:** Drag + **Shift** → **Convert** wheel. Drag + **Ctrl** → **Tools** wheel. Drag + **Alt** → **File actions** wheel.
 - **G2:** Local conversions for images, PDF, documents, spreadsheets, audio, video, subtitles, and archives (§6).
 - **G3:** **Quick Launch:** tap Shift → apps wheel; tap Ctrl → websites wheel. Works only on the desktop or in Explorer with nothing selected.
@@ -60,7 +60,7 @@
 - **G6:** Low idle RAM (NFR-1).
 - **G7:** Smart ordering, Undo + job history, and size presets across all compress tools.
 
-### 2.2 Non-goals (v0.1.0)
+### 2.2 Non-goals (v1.0.0)
 - macOS or Linux support.
 - An installer or `.exe` packaging.
 - Cloud processing, accounts, telemetry, or auto-update.
@@ -349,7 +349,7 @@ The desktop behind a wheel is effectively static while the wheel is open, so we 
 ### 9.1 Tech stack
 | Layer | Choice | Why |
 |---|---|---|
-| Language | **Python 3.12** | The team knows it. It has the richest local conversion libraries, and Claude Code is strong in it. |
+| Language | **Python 3.12** | The team knows it, and it has the richest local conversion libraries. |
 | Env / packaging | **uv**, `pyproject.toml` with a src layout, `uv.lock` committed | Setup is `uv sync` and run is `uv run dragshift`. No `.exe`. |
 | UI | **PySide6-Essentials** ≥ 6.8: Qt **Widgets** + QPainter (not QML) | Qt implements `IDropTarget` for us. It supports translucent frameless windows and is lighter than QML. QtSvg is included. |
 | Win32 | **ctypes** (hooks, DWM, BitBlt, user32) + **pywin32** (Shell COM) | No compiled extensions. |
@@ -379,9 +379,9 @@ Progress from workers comes back through a `multiprocessing.Manager().Queue()`, 
 
 ### 9.3 Repository layout
 ```
-pyproject.toml  uv.lock  README.md  LICENSE  CLAUDE.md  CONTRIBUTING.md  .pre-commit-config.yaml  .gitignore
+pyproject.toml  uv.lock  README.md  LICENSE  CONTRIBUTING.md  .pre-commit-config.yaml  .gitignore
 .github/ workflows/ci.yml  CODEOWNERS  ISSUE_TEMPLATE/
-docs/ PRD.md  architecture.md  manual-test-checklist.md  jira-import.csv
+docs/ PRD.md  architecture.md  manual-test-checklist.md
 src/dragshift/
   __init__.py  __main__.py            # argparse CLI: (default) run | --background | convert | tool | ops
   app.py                              # QApplication bootstrap, wiring, single instance, tray
@@ -622,14 +622,14 @@ It keeps at most 20 jobs (FIFO), newest first, and writes atomically. Cancelled 
 
 Each person assigns themselves A or B in Jira.
 
-**Points:** 1 pt ≈ 1–2 focused hours with Claude Code. Committed: A ≈ 46 pts, B ≈ 45 pts, shared 5 pts.
+**Points:** 1 pt ≈ 1–2 focused hours. Committed: A ≈ 46 pts, B ≈ 45 pts, shared 5 pts.
 
 **Mid-sprint gate (end of Day 4):** if a dev's remaining committed points exceed their remaining capacity, cut work in this order: DS-23 extras (video resize, audio bitrate), then DS-21 hashing, then DS-27 W/H fields. Stretch stories start **only** when all of a dev's committed stories are In Review or Done.
 
 ### 12.1 Stories (committed)
 | ID | Day | Owner | Pts | Epic | Story | Acceptance criteria (summary) | FRs |
 |---|---|---|---|---|---|---|---|
-| DS-1 | 0 | A | 1 | E1 Foundation | Planning docs: PRD, CLAUDE.md, Jira import | PRD merged, CLAUDE.md present, CSV imports cleanly | — |
+| DS-1 | 0 | A | 1 | E1 Foundation | Planning docs: PRD, contributor rules, Jira board | PRD merged, contributor rules present, board set up | — |
 | DS-2 | 1 | A | 2 | E1 | Repo scaffold | uv project with src layout; `uv run dragshift --help` works; ruff + pytest + pre-commit configured; LICENSE AGPL-3.0; `.gitignore` | FR-6.1 |
 | DS-3 | 1 | A | 2 | E1 | CI + PR template + CODEOWNERS | GitHub Actions on `windows-latest` runs ruff and pytest; PR template with checklist; CODEOWNERS requests the other dev | NFR-10 |
 | DS-4 | 1 | A | 5 | E2 Gesture | **Spike:** hooks + drag detection + COPY-only drop window | Throwaway script: logs drag candidate + modifier; shows a test drop window; dropping a file with Shift held leaves the **source in place**; notes on `SysDragImage` reliability and DragEnter timing in the PR | FR-1.1, 1.2, 1.8 |
@@ -660,7 +660,7 @@ Each person assigns themselves A or B in Jira.
 | DS-29 | 6 | B | 2 | E7 | Idle-RAM pass | `test_ui_imports` passes; working-set trim option; numbers recorded; M1 met | NFR-1 |
 | DS-30 | 7 | Both | 2 | E8 Release | README, docs, demo GIFs | README with install/run/usage GIFs; `docs/architecture.md`; manual checklist up to date | — |
 | DS-31 | 7 | Both | 3 | E8 | Bug bash | Full §11.2 checklist on both machines; bugs filed and fixed or deferred | M5 |
-| DS-32 | 7 | A | 1 | E8 | Release v0.1.0 | Tag `v0.1.0`, GitHub release notes, sprint review + retro notes in Jira | — |
+| DS-32 | 7 | A | 1 | E8 | Release v1.0.0 | Tag `v1.0.0`, GitHub release notes, sprint review + retro notes in Jira | — |
 
 ### 12.2 Stretch (only after the Day 4 gate)
 | ID | Owner | Pts | Story |
@@ -701,10 +701,10 @@ Until a dependency merges, work against its interface in §9.4 (stub it).
 - **Branches:** `main` is protected (PR + 1 approval + CI green; squash merge only). Work happens in short-lived branches named `<type>/DS-<n>-<slug>`, e.g. `feat/DS-13-image-converters`. Types: `feat`, `fix`, `docs`, `chore`, `refactor`, `test`, `spike`.
 - **Commits:** Conventional Commits that include the Jira key, e.g. `feat(engine): add HEIC to JPG [DS-13]`.
 - **PR title:** `DS-13 feat(engine): image converters`. The description covers: what changed, FRs covered, screenshots/GIFs for UI work, manual checklist items ticked, and RAM numbers when relevant.
-- **Reviews:** the other dev reviews within 4 working hours. Run Claude Code `/code-review` before requesting a human review.
+- **Reviews:** the other dev reviews within 4 working hours. Review your own diff before requesting one.
 - **Definition of Done:** acceptance criteria met · tests added/updated · CI green · 1 approval · relevant manual checklist items ticked · docs/PRD updated if behaviour changed · Jira ticket in Done (automatic on merge).
-- **Rules for AI agents (Claude Code):**
-  - Read `CLAUDE.md` and the story's PRD rows first.
+- **Rules for every change:**
+  - Read `CONTRIBUTING.md` and the story's PRD rows first.
   - Never push to `main`.
   - Keep each PR to one story.
   - Do not add dependencies not listed in §9.1 without noting it in the PR.

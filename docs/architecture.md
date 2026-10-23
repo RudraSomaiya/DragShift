@@ -38,7 +38,7 @@ flowchart TB
 
 Two rules keep this split honest:
 
-- **Lean imports (CLAUDE.md rule 2).** `ui/`, `platform/`, `gesture.py` and `app.py` never import Pillow, fitz, pandas, numpy, pdf2docx or pypandoc. Converter modules are imported by the UI process to register their Ops, so they import their engine *inside* the worker function. `tests/ui/test_ui_lean_imports.py` and `tests/engine/test_lean_imports.py` start the app in a subprocess and fail if any of those modules is loaded.
+- **Lean imports (CONTRIBUTING.md rule 2).** `ui/`, `platform/`, `gesture.py` and `app.py` never import Pillow, fitz, pandas, numpy, pdf2docx or pypandoc. Converter modules are imported by the UI process to register their Ops, so they import their engine *inside* the worker function. `tests/ui/test_ui_lean_imports.py` and `tests/engine/test_lean_imports.py` start the app in a subprocess and fail if any of those modules is loaded.
 - **Ops are referenced by dotted path.** `Op.func` is a string such as `dragshift.engine.converters.images:to_png`. The UI process never calls it; the worker imports and runs it.
 
 Qt uses the GDI font engine (`-platform windows:fontengine=gdi`). DirectWrite's font database alone cost about 28 MB of private memory in the DS-5 spike.
@@ -64,7 +64,7 @@ Cost of the trim: opening the wheel straight after one took a median 23 ms again
 
 `platform/hooks.py` installs low-level mouse and keyboard hooks (`WH_MOUSE_LL = 14`, `WH_KEYBOARD_LL = 13`) on a dedicated thread with its own `GetMessageW` loop.
 
-Windows silently removes a low-level hook whose callback is too slow, so the callbacks do O(1) work (NFR-3, CLAUDE.md rule 3):
+Windows silently removes a low-level hook whose callback is too slow, so the callbacks do O(1) work (NFR-3, CONTRIBUTING.md rule 3):
 
 1. Copy the event into a small tuple.
 2. Emit a queued Qt signal.

@@ -651,7 +651,7 @@ def test_selection_count_never_raises() -> None:
     assert shell.selection_count(0, "Chrome_WidgetWin_1") is None
 
 
-# --- the UI process stays lean (CLAUDE.md rule 2) ----------------------------------------------------
+# --- the UI process stays lean (CONTRIBUTING.md rule 2) ----------------------------------------------------
 def test_gesture_modules_import_no_engine_libraries() -> None:
     heavy = ["PIL", "fitz", "pandas", "numpy", "pdf2docx", "pypandoc"]
     script = (
