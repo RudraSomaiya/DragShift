@@ -5,7 +5,9 @@
   ``CallNextHookEx``. No COM, no I/O, no logging, and input is never swallowed (NFR-3).
 - Synthesised events (``SendInput`` etc.) carry the ``INJECTED`` flag and are dropped (FR-1.1).
 - Windows silently removes a hook whose callback is too slow. A 5 s watchdog on the same thread
-  notices that the system saw input our hooks did not, and re-installs them (NFR-3).
+  notices that the system saw input our hooks did not, and re-installs them (NFR-3). Input on
+  the secure desktop or in an elevated window never reaches a non-elevated hook, so for those
+  it leaves the hooks alone (``unseeable_input``).
 - Mouse moves are forwarded only while the left button is held; that is all the drag branch of
   §9.5 needs, and it avoids ~1000 signals per second the rest of the time.
 """
@@ -91,8 +93,16 @@ _KEY_KINDS = {
     WM_SYSKEYUP: InputKind.KEY_UP,
 }
 
+# Watchdog: input our hooks can never see, so re-installing them would not help
+DESKTOP_READOBJECTS = 0x0001  # OpenInputDesktop right: enough to read the desktop's name
+UOI_NAME = 2  # GetUserObjectInformationW: the object's name ("Default", "Winlogon", ...)
+PROCESS_QUERY_LIMITED_INFORMATION = 0x1000  # OpenProcess right: image name and token
+TOKEN_QUERY = 0x0008
+TOKEN_ELEVATION_CLASS = 20  # TOKEN_INFORMATION_CLASS.TokenElevation
+
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
 
 # LRESULT CALLBACK LowLevelProc(int nCode, WPARAM wParam, LPARAM lParam)
 HOOKPROC = ctypes.WINFUNCTYPE(ctypes.c_ssize_t, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM)
@@ -159,6 +169,42 @@ kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
 kernel32.GetModuleHandleW.restype = wintypes.HMODULE
 kernel32.GetCurrentThreadId.restype = wintypes.DWORD
 kernel32.GetTickCount.restype = wintypes.DWORD
+user32.OpenInputDesktop.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+user32.OpenInputDesktop.restype = wintypes.HANDLE
+user32.GetUserObjectInformationW.argtypes = [
+    wintypes.HANDLE,
+    ctypes.c_int,
+    ctypes.c_void_p,
+    wintypes.DWORD,
+    ctypes.POINTER(wintypes.DWORD),
+]
+user32.GetUserObjectInformationW.restype = wintypes.BOOL
+user32.CloseDesktop.argtypes = [wintypes.HANDLE]
+user32.GetForegroundWindow.restype = wintypes.HWND
+user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+kernel32.OpenProcess.restype = wintypes.HANDLE
+kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+kernel32.QueryFullProcessImageNameW.argtypes = [
+    wintypes.HANDLE,
+    wintypes.DWORD,
+    wintypes.LPWSTR,
+    ctypes.POINTER(wintypes.DWORD),
+]
+kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+advapi32.OpenProcessToken.argtypes = [
+    wintypes.HANDLE,
+    wintypes.DWORD,
+    ctypes.POINTER(wintypes.HANDLE),
+]
+advapi32.GetTokenInformation.argtypes = [
+    wintypes.HANDLE,
+    ctypes.c_int,
+    ctypes.c_void_p,
+    wintypes.DWORD,
+    ctypes.POINTER(wintypes.DWORD),
+]
 
 
 class HookInstallError(OSError):
@@ -179,6 +225,71 @@ def _last_input_tick() -> int:
     info = LASTINPUTINFO(ctypes.sizeof(LASTINPUTINFO), 0)
     user32.GetLastInputInfo(ctypes.byref(info))
     return info.dwTime
+
+
+def _input_desktop() -> str:
+    """Name of the desktop that gets the input: "Default" normally, "" for the secure desktop
+    (the lock screen, a UAC prompt), which this process may not even open."""
+    desk = user32.OpenInputDesktop(0, False, DESKTOP_READOBJECTS)
+    if not desk:
+        return ""
+    try:
+        buf = ctypes.create_unicode_buffer(64)
+        ok = user32.GetUserObjectInformationW(desk, UOI_NAME, buf, ctypes.sizeof(buf), None)
+        return buf.value if ok else ""
+    finally:
+        user32.CloseDesktop(desk)
+
+
+def _token_elevated(process: int) -> bool | None:
+    """True if ``process`` (a handle) runs elevated; None if its token cannot be read."""
+    token = wintypes.HANDLE()
+    if not advapi32.OpenProcessToken(process, TOKEN_QUERY, ctypes.byref(token)):
+        return None
+    try:
+        elevated = wintypes.DWORD()
+        size = wintypes.DWORD()
+        ok = advapi32.GetTokenInformation(
+            token, TOKEN_ELEVATION_CLASS, ctypes.byref(elevated), 4, ctypes.byref(size)
+        )
+        return bool(elevated.value) if ok else None
+    finally:
+        kernel32.CloseHandle(token)
+
+
+_SELF_ELEVATED = _token_elevated(kernel32.GetCurrentProcess())
+
+
+def _foreground() -> tuple[str, bool | None]:
+    """(executable name, elevated?) of the foreground window's process. ("", None) if unknown:
+    no foreground window, or a protected process this one may not open."""
+    pid = wintypes.DWORD()
+    fg = user32.GetForegroundWindow()
+    if not fg or not user32.GetWindowThreadProcessId(fg, ctypes.byref(pid)):
+        return "", None
+    process = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid.value)
+    if not process:
+        return "", None
+    try:
+        size = wintypes.DWORD(1024)
+        buf = ctypes.create_unicode_buffer(size.value)
+        ok = kernel32.QueryFullProcessImageNameW(process, 0, buf, ctypes.byref(size))
+        name = buf.value.rsplit("\\", 1)[-1] if ok else ""
+        return name, _token_elevated(process)
+    finally:
+        kernel32.CloseHandle(process)
+
+
+def unseeable_input() -> str | None:
+    """Why the system may see input that our hooks never will, or None. Low-level hooks get
+    no input from the secure desktop, and none aimed at an elevated window when this process
+    is not elevated (UIPI). Re-installing the hooks helps with neither."""
+    if _input_desktop().lower() != "default":
+        return "the secure desktop (lock screen or UAC prompt)"
+    name, elevated = _foreground()
+    if elevated and not _SELF_ELEVATED:
+        return f"an elevated window ({name or 'unknown'})"
+    return None
 
 
 class HookThread(QThread):
@@ -206,6 +317,7 @@ class HookThread(QThread):
         self._last_seen_tick = 0
         self._fruitless = 0
         self._skip_ticks = 0
+        self._unseeable: str | None = None  # why input is out of the hooks' reach, last tick
         self.injected_ignored = 0
         self.errors = 0  # exceptions swallowed inside callbacks (the hook must keep going)
         self.reinstall_count = 0
@@ -341,8 +453,21 @@ class HookThread(QThread):
             return
         if not hook_looks_dead(_last_input_tick(), self._last_seen_tick, self._stale_ms):
             self._fruitless = 0
+            self._unseeable = None
             return
-        log.warning("input hooks look dead (system saw input they did not); re-installing")
+        reason = unseeable_input()
+        if reason is not None:
+            # Healthy hooks miss this input too: leave them, and the gesture state, alone.
+            if reason != self._unseeable:
+                log.info("input goes to %s, which the hooks cannot see; not re-installing", reason)
+            self._unseeable = reason
+            return
+        self._unseeable = None
+        name, _ = _foreground()
+        log.warning(
+            "input hooks look dead (system saw input they did not, foreground %s); re-installing",
+            name or "unknown",
+        )
         self._uninstall()
         try:
             self._install()
@@ -351,7 +476,7 @@ class HookThread(QThread):
         else:
             self.reinstall_count += 1
             self.reinstalled.emit()
-        # Input in an elevated window never reaches a non-elevated hook (UIPI). When a
-        # re-install does not help, back off instead of re-installing every tick.
+        # unseeable_input() catches the known causes. When a re-install still does not help,
+        # back off instead of re-installing every tick.
         self._fruitless += 1
         self._skip_ticks = min(2**self._fruitless - 1, MAX_BACKOFF_TICKS)
