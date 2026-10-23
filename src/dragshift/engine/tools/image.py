@@ -1,11 +1,12 @@
-"""Image tools (PRD §6.2 image row): Compress ▸ presets, Resize ▸, Rotate ▸, Strip metadata.
+"""Image tools (PRD §6.2 image row): Compress ▸ presets, Crop, Resize ▸, Rotate ▸, Strip metadata.
 
 Resize ▸ (50 %, 1080p, 4K), Rotate ▸ and Strip metadata keep the format too. Resize re-encodes at
 the Settings quality, the others at 95 (they change no detail). 1080p and 4K fit the picture
 inside 1920x1080 or 3840x2160 (turned to match a portrait picture) and never enlarge it. Strip
 metadata drops EXIF (GPS included), XMP and text chunks, and keeps the colour profile; a JPEG is
 stripped without a re-encode unless its orientation must be applied first.
-Outputs: ``<stem> Resized|Rotated|Flipped|Stripped.<ext>``.
+Crop cuts the box the dialog sends (``params["crop"]``, fractions of the upright picture).
+Outputs: ``<stem> Cropped|Resized|Rotated|Flipped|Stripped.<ext>``.
 
 Compress keeps the format (§6.2). A size target is met by searching the highest quality that
 fits (JPEG, WebP, HEIC, AVIF), or by reducing a PNG to 256 colours, and then by scaling down
@@ -197,7 +198,7 @@ def compress(paths: list[Path], params: dict, ctx: "JobContext") -> list[Path]:
     return outputs
 
 
-# --- Resize, Rotate, Strip metadata ----------------------------------------------------------
+# --- Crop, Resize, Rotate, Strip metadata -----------------------------------------------------
 LOSSLESS_Q = 95  # for edits that change no detail: a re-encode costs nothing visible
 
 
@@ -270,6 +271,21 @@ def _redo(paths: list[Path], params: dict, ctx: "JobContext", label: str, change
         dst.write_bytes(data)
         outputs.append(dst)
     return outputs
+
+
+def _cropped(im: "Image", params: dict, ctx: "JobContext") -> "Image":
+    """The Crop dialog's box, given as fractions of the upright picture."""
+    w, h = im.size
+    left, top, right, bottom = params["crop"]
+    left, top = min(round(left * w), w - 1), min(round(top * h), h - 1)
+    box = (left, top, max(round(right * w), left + 1), max(round(bottom * h), top + 1))
+    return im.crop(box)
+
+
+@op(id="tools.image.crop", wheel="tools", label="Crop", kinds=frozenset({Kind.IMAGE}),
+    dialog="crop", only_exts=frozenset(_FORMATS.values()))  # fmt: skip
+def crop(paths: list[Path], params: dict, ctx: "JobContext") -> list[Path]:
+    return _redo(paths, params, ctx, "Cropped", _cropped, quality=LOSSLESS_Q)
 
 
 def _resized(im: "Image", params: dict, ctx: "JobContext") -> "Image":
