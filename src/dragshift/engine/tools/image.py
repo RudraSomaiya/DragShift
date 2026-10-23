@@ -6,7 +6,9 @@ inside 1920x1080 or 3840x2160 (turned to match a portrait picture) and never enl
 metadata drops EXIF (GPS included), XMP and text chunks, and keeps the colour profile; a JPEG is
 stripped without a re-encode unless its orientation must be applied first.
 Crop cuts the box the dialog sends (``params["crop"]``, fractions of the upright picture).
-Outputs: ``<stem> Cropped|Resized|Rotated|Flipped|Stripped.<ext>``.
+Add BG sets the picture on a gradient, colour or image with padding, rounded corners and a
+shadow (params in ``engine/backdrop.py``), and always writes a PNG.
+Outputs: ``<stem> Cropped|Resized|Rotated|Flipped|Stripped.<ext>``, ``<stem> BG.png``.
 
 Compress keeps the format (§6.2). A size target is met by searching the highest quality that
 fits (JPEG, WebP, HEIC, AVIF), or by reducing a PNG to 256 colours, and then by scaling down
@@ -27,6 +29,7 @@ import math
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from dragshift.engine import backdrop
 from dragshift.engine.converters.images import (
     TARGETS,
     ImageFormat,
@@ -286,6 +289,123 @@ def _cropped(im: "Image", params: dict, ctx: "JobContext") -> "Image":
     dialog="crop", only_exts=frozenset(_FORMATS.values()))  # fmt: skip
 def crop(paths: list[Path], params: dict, ctx: "JobContext") -> list[Path]:
     return _redo(paths, params, ctx, "Cropped", _cropped, quality=LOSSLESS_Q)
+
+
+GRADIENT_SIDE = 512  # a gradient is smooth: it is made at most this big and scaled up
+
+
+def _gradient(size: tuple[int, int], colours: list[str]) -> "Image":
+    """``colours`` from the top left corner to the bottom right one, as Qt's gradient between
+    those corners: t = (x*W + y*H) / (W^2 + H^2)."""
+    from PIL import Image, ImageOps
+
+    w, h = size
+    small = (min(w, GRADIENT_SIDE), min(h, GRADIENT_SIDE))
+    ramp = Image.linear_gradient("L")  # 256 x 256, black at the top to white at the bottom
+    across = ramp.transpose(Image.Transpose.ROTATE_90).resize(small, Image.Resampling.BILINEAR)
+    down = ramp.resize(small, Image.Resampling.BILINEAR)
+    t = Image.blend(across, down, h * h / (w * w + h * h))
+    fill = ImageOps.colorize(t, colours[0], colours[1])
+    return fill if small == size else fill.resize(size, Image.Resampling.BILINEAR)
+
+
+def _backdrop(spec: dict, size: tuple[int, int]) -> "Image":
+    from PIL import Image, ImageOps
+
+    if spec["kind"] == "solid":
+        return Image.new("RGB", size, spec["color"])
+    if spec["kind"] == "gradient":
+        return _gradient(size, spec["colors"])
+    picture = prepare(open_image(Path(spec["path"])), TARGETS["jpg"])  # flattened, RGB
+    return ImageOps.fit(picture, size, Image.Resampling.LANCZOS)  # covers the canvas
+
+
+def _round_mask(size: tuple[int, int], radius: int) -> "Image":
+    """White, with the four corners cut to ``radius`` and smoothed. Only a disc of the corner
+    size is drawn (at 4x), not the whole picture."""
+    from PIL import Image, ImageDraw
+
+    mask = Image.new("L", size, 255)
+    if radius <= 0:
+        return mask
+    d, w, h = 2 * radius, *size
+    disc = Image.new("L", (d * 4, d * 4), 0)
+    ImageDraw.Draw(disc).ellipse((0, 0, d * 4 - 1, d * 4 - 1), fill=255)
+    disc = disc.resize((d, d), Image.Resampling.LANCZOS)
+    for dx, dy in ((0, 0), (radius, 0), (0, radius), (radius, radius)):
+        corner = disc.crop((dx, dy, dx + radius, dy + radius))
+        mask.paste(corner, (0 if dx == 0 else w - radius, 0 if dy == 0 else h - radius))
+    return mask
+
+
+def _to_srgb(im: "Image") -> "Image":
+    """``im`` in sRGB with no profile: the backdrop colours (and the dialog's preview) are sRGB,
+    so a photo tagged Display P3 or Adobe RGB must be converted, or the output's profile would
+    be read onto the backdrop too. A profile that cannot be read is dropped."""
+    from PIL import ImageCms
+
+    icc = im.info.get("icc_profile")
+    if not icc:
+        return im
+    try:
+        source = ImageCms.ImageCmsProfile(io.BytesIO(icc))
+        out = ImageCms.profileToProfile(im, source, ImageCms.createProfile("sRGB"),
+                                        outputMode=im.mode)  # fmt: skip
+    except (ImageCms.PyCMSError, OSError):
+        out = im.copy()
+    out.info = {k: v for k, v in im.info.items() if k != "icc_profile"}
+    return out
+
+
+def _with_background(im: "Image", params: dict) -> "Image":
+    """``im`` on its backdrop: padded, rounded and shadowed as the Add BG dialog showed."""
+    from PIL import Image, ImageChops, ImageFilter
+
+    defaults = backdrop.DEFAULTS
+    padding = int(params.get("padding", defaults["padding"]))
+    ratio = params.get("ratio", defaults["ratio"])
+    (cw, ch), (x, y) = backdrop.layout(im.size, padding, ratio)
+    if cw * ch > backdrop.MAX_PIXELS:
+        raise ValueError(
+            f"the result would be too large ({cw} x {ch} px, over "
+            f"{backdrop.MAX_PIXELS // 1_000_000} megapixels); use less padding or another ratio"
+        )
+    im = _to_srgb(im)
+    canvas = _backdrop(params.get("bg", defaults["bg"]), (cw, ch))
+    radius = backdrop.corner_radius(im.size, int(params.get("corners", defaults["corners"])))
+    mask = _round_mask(im.size, radius)
+    if "A" in im.getbands():  # a transparent picture shows the backdrop through it
+        mask = ImageChops.multiply(mask, im.getchannel("A"))
+    opacity, sigma, drop = backdrop.shadow_look(int(params.get("shadow", defaults["shadow"])))
+    if opacity > 0:
+        # The shadow is the picture's own silhouette (corners and transparency), moved down and
+        # blurred, on just the part of the canvas the blur reaches.
+        margin, down = math.ceil(3 * sigma), round(drop)
+        left, top = max(0, x - margin), max(0, y + down - margin)
+        right, bottom = min(cw, x + im.width + margin), min(ch, y + down + im.height + margin)
+        layer = Image.new("L", (right - left, bottom - top), 0)
+        layer.paste(mask, (x - left, y + down - top))
+        layer = layer.filter(ImageFilter.GaussianBlur(sigma)).point(lambda v: round(v * opacity))
+        canvas.paste((0, 0, 0), (left, top), layer)
+    canvas.paste(im if im.mode == "RGB" else im.convert("RGB"), (x, y), mask)
+    return canvas
+
+
+@op(id="tools.image.add_bg", wheel="tools", label="Add BG", kinds=frozenset({Kind.IMAGE}),
+    dialog="add_bg", only_exts=frozenset(_FORMATS.values()))  # fmt: skip
+def add_bg(paths: list[Path], params: dict, ctx: "JobContext") -> list[Path]:
+    """Each picture on the backdrop the dialog chose, written as ``<stem> BG.png``."""
+    outputs = []
+    for i, src in enumerate(paths):
+        if ctx.cancelled():
+            return []  # run_job discards anything reserved
+        ctx.progress(i / len(paths), src.name)
+        im, _ = _read(src, "given a background")
+        result = _with_background(prepare(im, TARGETS["png"]), params)
+        dst = ctx.output_path(src, ext="png", label="BG")
+        dst.write_bytes(_encode(result, TARGETS["png"], None, b""))
+        outputs.append(dst)
+    return outputs
 
 
 def _resized(im: "Image", params: dict, ctx: "JobContext") -> "Image":

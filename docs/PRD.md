@@ -329,6 +329,7 @@ The desktop behind a wheel is effectively static while the wheel is open, so we 
   - Footer: **Reset**, and **Save with Background** (primary).
   - Output: `<stem> BG.png`.
   - The preview is rendered with QPainter in the UI process, at most 800 px. The final full-resolution render runs in the worker with Pillow, using the same parameters.
+  - Params: `{"bg": {"kind": "gradient", "colors": [from, to]} | {"kind": "solid", "color": "#RRGGBB"} | {"kind": "image", "path": …}, "padding": px, "corners": px, "shadow": 0–100, "ratio": "Auto"|"1:1"|"16:9"|"4:5"}` (`engine/backdrop.py`). Pixel values are in source-image pixels, so several dropped images get the same look; the first is previewed. A gradient runs from the top-left to the bottom-right corner, an image covers the canvas, and a ratio grows the canvas (it never crops the picture). Qt does the preview, so HEIC/AVIF show "No preview" but can still be saved.
 - **Custom compress dialog:** target MB *or* quality slider, plus an estimate line.
 - **Extract pages dialog:** text field for a page range (`1-3,7`) and a page count hint.
 

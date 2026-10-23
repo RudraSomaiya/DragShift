@@ -63,17 +63,17 @@ def test_drops_use_the_quality_and_dpi_from_settings(
 def test_an_op_that_needs_a_dialog_is_not_run_blindly(
     the_app: App, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    add_bg = Op(  # its dialog comes with DS-28
-        id="tools.image.add_bg",
+    extract = Op(  # its dialog comes with its own story
+        id="tools.pdf.extract",
         wheel="tools",
-        label="Add BG",
+        label="Extract pages",
         kinds=frozenset(),
         func="x:y",
-        dialog="add_bg",
+        dialog="pages",
     )
-    monkeypatch.setattr(registry, "get", lambda op_id: add_bg)
+    monkeypatch.setattr(registry, "get", lambda op_id: extract)
     monkeypatch.setattr(the_app.jobs, "submit", lambda *_: pytest.fail("must not submit"))
-    the_app.wheel.dropped.emit("tools.image.add_bg", [Path("C:/x/a.png")])
+    the_app.wheel.dropped.emit("tools.pdf.extract", [Path("C:/x/a.pdf")])
     assert the_app._dialog is None
 
 
@@ -390,3 +390,19 @@ def test_undo_from_the_tray_s_history(
     assert trashed == [out]
     assert the_app.history.get("j1").undone
     assert the_app.toasts.stack.get("j1").content.title == "Undone"
+
+
+def test_add_bg_asks_first_and_runs_with_the_look_on_save(
+    the_app: App, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    submitted: list[tuple] = []
+    monkeypatch.setattr(the_app.jobs, "submit", lambda *a, **k: submitted.append(a) or "id")
+    src = png(tmp_path / "a.png")
+    the_app.wheel.dropped.emit("tools.image.add_bg", [src])
+    dialog = the_app._dialog
+    assert dialog.isVisible() and submitted == []
+    dialog.padding.setValue(10)
+    dialog.save.click()
+    assert submitted[0][:2] == ("tools.image.add_bg", [src])
+    assert submitted[0][2]["padding"] == 10
+    assert submitted[0][2]["bg"]["kind"] == "gradient"
