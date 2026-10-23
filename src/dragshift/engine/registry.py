@@ -32,6 +32,7 @@ class Op:
     where: Literal["worker", "ui"] = "worker"
     available: Callable[[], bool] = lambda: True  # e.g. office installed
     hide_if_same_ext: str | None = None  # hide the "PNG" petal for .png input
+    only_exts: frozenset[str] | None = None  # normalized extensions the Op can read; None: any
 
 
 # Packages whose modules declare Ops.
@@ -90,7 +91,10 @@ def _fits(op: Op, infos: list[_Info]) -> bool:
     if not infos or len(infos) < op.min_files:
         return False
     same = normalize_ext(op.hide_if_same_ext) if op.hide_if_same_ext else None
-    return all(kind in op.kinds and ext != same for kind, ext in infos)
+    return all(
+        kind in op.kinds and ext != same and (op.only_exts is None or ext in op.only_exts)
+        for kind, ext in infos
+    )
 
 
 def accepts(op: Op, paths: Sequence[Path]) -> bool:

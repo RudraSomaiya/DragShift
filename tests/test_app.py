@@ -63,17 +63,18 @@ def test_drops_use_the_quality_and_dpi_from_settings(
 def test_an_op_that_needs_a_dialog_is_not_run_blindly(
     the_app: App, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    crop = Op(
-        id="tools.image.crop",
+    add_bg = Op(  # its dialog comes with DS-28
+        id="tools.image.add_bg",
         wheel="tools",
-        label="Crop",
+        label="Add BG",
         kinds=frozenset(),
         func="x:y",
-        dialog="crop",
+        dialog="add_bg",
     )
-    monkeypatch.setattr(registry, "get", lambda op_id: crop)
+    monkeypatch.setattr(registry, "get", lambda op_id: add_bg)
     monkeypatch.setattr(the_app.jobs, "submit", lambda *_: pytest.fail("must not submit"))
-    the_app.wheel.dropped.emit("tools.image.crop", [Path("C:/x/a.png")])
+    the_app.wheel.dropped.emit("tools.image.add_bg", [Path("C:/x/a.png")])
+    assert the_app._dialog is None
 
 
 def test_the_real_pipeline_converts_and_leaves_the_source_alone(
@@ -282,6 +283,21 @@ def test_custom_compress_asks_first_and_runs_on_accept(
              "target_mb": 2.5},
         )
     ]  # fmt: skip
+
+
+def test_crop_asks_first_and_runs_with_the_box_on_apply(
+    the_app: App, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    submitted: list[tuple] = []
+    monkeypatch.setattr(the_app.jobs, "submit", lambda *a, **k: submitted.append(a) or "id")
+    src = png(tmp_path / "a.png")  # 24x16
+    the_app.wheel.dropped.emit("tools.image.crop", [src])
+    dialog = the_app._dialog
+    assert dialog.isVisible() and submitted == []
+    dialog.width_field.setValue(12)
+    dialog.apply.click()
+    assert submitted[0][:2] == ("tools.image.crop", [src])
+    assert submitted[0][2]["crop"] == [0.0, 0.0, 0.5, 1.0]
 
 
 def test_cancelling_the_compress_dialog_runs_nothing(

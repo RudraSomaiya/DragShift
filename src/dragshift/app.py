@@ -38,6 +38,7 @@ from dragshift.platform.single_instance import SingleInstance
 from dragshift.ui import theme
 from dragshift.ui.dialogs.base_glass import GlassDialog
 from dragshift.ui.dialogs.compress import CompressDialog
+from dragshift.ui.dialogs.crop import CropDialog
 from dragshift.ui.dialogs.settings import SettingsWindow
 from dragshift.ui.job_toasts import JobToasts, primary_output
 from dragshift.ui.launcher_wheel import LauncherWheel
@@ -48,9 +49,9 @@ __all__ = ["App", "build", "run"]
 
 log = logging.getLogger(__name__)
 
-# Op.dialog -> the window that collects its params (§8.6). Crop, Add BG and Extract pages come
-# with their own stories.
-DIALOGS = {"compress": CompressDialog}
+# Op.dialog -> the window that collects its params (§8.6). Add BG and Extract pages come with
+# their own stories.
+DIALOGS = {"compress": CompressDialog, "crop": CropDialog}
 
 
 class App(QObject):

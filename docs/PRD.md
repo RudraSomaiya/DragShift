@@ -318,6 +318,7 @@ The desktop behind a wheel is effectively static while the wheel is open, so we 
   - W and H numeric fields in px (editable; they follow the ratio).
   - Footer: **Reset** (left) and **Apply** (right, primary).
   - Output: `<stem> Cropped.<ext>`.
+  - Params: `{"crop": [l, t, r, b]}` as fractions of the upright image, so several dropped images get the same relative crop (the first is previewed). Qt does the preview, so HEIC/AVIF show "No preview" and cannot be cropped.
 - **Add BG dialog** (reel image 2):
   - Title "Add BG".
   - Live preview of the image on its background.
@@ -438,6 +439,7 @@ class Op:
     where: Literal["worker", "ui"] = "worker"
     available: Callable[[], bool] = lambda: True   # e.g. office installed
     hide_if_same_ext: str | None = None            # hide the "PNG" petal for .png input
+    only_exts: frozenset[str] | None = None        # normalized extensions the Op can read (Crop: no GIF/SVG/ICO); None: any
 
 def register(op: Op) -> Op: ...
 def ops_for(paths: Sequence[Path], wheel: Wheel) -> list[Op]: ...     # intersection + availability + default order;

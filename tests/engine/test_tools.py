@@ -186,6 +186,33 @@ def test_image_rotate_applies_the_exif_orientation_once(tmp_path: Path) -> None:
         assert 0x0112 not in got.getexif()
 
 
+def test_image_crop_cuts_the_box_given_as_fractions(tmp_path: Path) -> None:
+    src = photo(tmp_path / "a.png")  # 400x200: red left half, blue right half
+    (out,) = done("tools.image.crop", [src], {"crop": [0.5, 0.0, 1.0, 0.5]})
+    assert out.name == "a Cropped.png"
+    with Image.open(out) as got:
+        assert got.size == (200, 100)
+        assert got.getpixel((0, 0)) == BLUE
+
+
+def test_image_crop_applies_the_exif_orientation_first(tmp_path: Path) -> None:
+    src = tmp_path / "phone.jpg"
+    exif = Image.Exif()
+    exif[0x0112] = 6  # stored 400x200, upright it is 200x400
+    Image.new("RGB", (400, 200), RED).save(src, exif=exif)
+    (out,) = done("tools.image.crop", [src], {"crop": [0, 0, 1, 0.5]})
+    with Image.open(out) as got:
+        assert got.size == (200, 200)
+        assert 0x0112 not in got.getexif()
+
+
+def test_image_crop_never_makes_an_empty_image(tmp_path: Path) -> None:
+    src = photo(tmp_path / "a.png")
+    (out,) = done("tools.image.crop", [src], {"crop": [1, 1, 1, 1]})
+    with Image.open(out) as got:
+        assert got.size == (1, 1)
+
+
 def test_image_strip_removes_exif_gps_and_keeps_the_profile(tmp_path: Path) -> None:
     profile = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
     exif = Image.Exif()

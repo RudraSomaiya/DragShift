@@ -103,3 +103,11 @@ def test_real_ops_are_auto_loaded() -> None:
     assert "convert.image.jpg" in [o.id for o in ops_for([Path("a.png")], "convert")]
     assert "convert.image.jpg" not in [o.id for o in ops_for([Path("a.jpg")], "convert")]
     assert registry._loaded
+
+
+def test_crop_is_offered_only_for_images_the_worker_can_crop() -> None:
+    def tools(name: str) -> list[str]:
+        return [o.id for o in registry.ops_for([Path(name)], "tools")]
+
+    assert "tools.image.crop" in tools("a.jpeg") and "tools.image.crop" in tools("a.png")
+    assert all("tools.image.crop" not in tools(f"a.{ext}") for ext in ("gif", "svg", "ico"))
