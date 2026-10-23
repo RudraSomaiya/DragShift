@@ -43,6 +43,23 @@ Two rules keep this split honest:
 
 Qt uses the GDI font engine (`-platform windows:fontengine=gdi`). DirectWrite's font database alone cost about 28 MB of private memory in the DS-5 spike.
 
+### Idle memory (NFR-1, M1)
+
+Measured in DS-29 on Windows 11, python.exe, PySide6 6.12, GDI fonts, with `App` built, the tray icon shown, the real trim timer, and **no hooks started** (a live hook run is checklist item 13):
+
+| Stage | Private | Working set |
+|---|---|---|
+| Bare `QApplication` | 33.7 MB | 58.5 MB |
+| `App` built + tray shown | 34.7 MB | 64.9 MB |
+| Idle 30 s (the trim has run) | 34.7 MB | 3.9 MB |
+| Idle 120 s | 34.5 MB | 4.5 MB |
+
+No worker pool was alive, and PIL, fitz, pandas, numpy, pdf2docx, pypandoc, ssl and urllib.request were not loaded. M1 counts private bytes, so it holds with about 25 MB to spare; the hooks thread adds a thread stack and little else, and the wheel's first draw added about 1.2 MB in DS-5.
+
+**Trim memory when idle** (Settings > General, on by default) calls `K32EmptyWorkingSet` 30 s after the last wheel or launcher close, job, dialog or Settings close, or settings change. It waits while a window is open, and looks again while the worker pool is alive (it lingers 60 s after a job). It lowers the working set (what Task Manager shows), not private bytes.
+
+Cost of the trim: opening the wheel straight after one took a median 23 ms against 18 ms warm (`open()` plus one event-loop pass, offscreen, so without the real screen grab). The pages come back from the standby list, and M2's budget is 120 ms.
+
 ## Input hooks
 
 `platform/hooks.py` installs low-level mouse and keyboard hooks (`WH_MOUSE_LL = 14`, `WH_KEYBOARD_LL = 13`) on a dedicated thread with its own `GetMessageW` loop.

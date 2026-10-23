@@ -32,7 +32,7 @@ from dragshift.gesture import GestureController
 from dragshift.history import History
 from dragshift.launcher import apps, sites
 from dragshift.launcher.sites import FaviconCache
-from dragshift.platform import autostart, files
+from dragshift.platform import autostart, files, memory
 from dragshift.platform.hooks import HookInstallError, HookThread
 from dragshift.platform.single_instance import SingleInstance
 from dragshift.ui import theme
@@ -52,6 +52,8 @@ log = logging.getLogger(__name__)
 
 # Op.dialog -> the window that collects its params (§8.6). Extract pages comes with its own story.
 DIALOGS = {"add_bg": AddBgDialog, "compress": CompressDialog, "crop": CropDialog}
+
+TRIM_AFTER_MS = 30_000  # quiet this long -> trim the working set (NFR-1)
 
 
 class App(QObject):
@@ -79,6 +81,10 @@ class App(QObject):
         self.tray = Tray(self.history, self)  # shown by run(), not in tests
         self._dialog: GlassDialog | None = None  # the open op dialog (FR-2.5)
         self.settings: SettingsWindow | None = None  # made when opened, gone when closed (NFR-1)
+        self._trim_timer = QTimer(self)  # quiet for TRIM_AFTER_MS -> give the idle pages back
+        self._trim_timer.setSingleShot(True)
+        self._trim_timer.setInterval(TRIM_AFTER_MS)
+        self._trim_timer.timeout.connect(self._trim_memory)
 
         queued = Qt.ConnectionType.QueuedConnection
         self.hooks.raw_input.connect(self.gesture.on_input, queued)
@@ -87,9 +93,12 @@ class App(QObject):
         self.store.changed.connect(self.gesture.apply_config)
         self.store.changed.connect(self.on_config_changed)
         self.wheel.dropped.connect(self.on_dropped)
+        self.wheel.closed.connect(self.trim_soon)
+        self.jobs.finished.connect(self.trim_soon)
         self.jobs.finished.connect(self.on_finished)
         self.gesture.quick_launch.connect(self.on_quick_launch)
         self.launcher.picked.connect(self.on_picked)
+        self.launcher.closed.connect(self.trim_soon)
         self.launcher.add_requested.connect(self.on_add_requested)
         self.favicons.updated.connect(self.launcher.reload_icons)
         self.history.changed.connect(self.apply_ordering)
@@ -98,7 +107,34 @@ class App(QObject):
         self.tray.logs_requested.connect(lambda: files.open_path(log_dir()))
         self.tray.quit_requested.connect(QApplication.quit)
         self.tray.history_action.connect(self.on_history_action)
-        self.on_config_changed(self.store.config)
+        self.on_config_changed(self.store.config)  # also starts the idle clock
+
+    @Slot()
+    def trim_soon(self) -> None:
+        """Restart the quiet-period clock; it fires once nothing has used the UI for a while."""
+        self._trim_timer.start()
+
+    def _trim_memory(self) -> None:
+        """Settings > General > Trim memory when idle (NFR-1). Not while a window is up: its
+        close restarts the clock. Not while the worker pool is alive either (it lingers
+        IDLE_SHUTDOWN_MS after a job); that has no signal, so look again in TRIM_AFTER_MS."""
+        if not self.store.config.general.trim_memory_when_idle:
+            return
+        windows = (self.wheel, self.launcher, self._dialog, self.settings)
+        if any(w is not None and w.isVisible() for w in windows):
+            return
+        if self.jobs.pool_active:
+            self.trim_soon()
+            return
+        before = memory.usage()
+        memory.trim()
+        after = memory.usage()
+        log.info(
+            "trimmed memory: working set %.1f -> %.1f MB, private %.1f MB",
+            before.working_set_mb,
+            after.working_set_mb,
+            after.private_mb,
+        )
 
     @Slot()
     def apply_ordering(self) -> None:
@@ -107,6 +143,7 @@ class App(QObject):
 
     @Slot(object)
     def on_config_changed(self, config: Config) -> None:
+        self.trim_soon()  # a setting changed, or start-up: the pages in use are not needed again
         self.wheel.set_appearance(config.appearance)  # theme, accent, reduced motion (§8.2)
         self.launcher.set_appearance(config.appearance)
         self.toasts.stack.set_appearance(config.appearance)
@@ -143,6 +180,7 @@ class App(QObject):
         if self.settings is window:
             self.settings = None
         window.deleteLater()
+        self.trim_soon()
 
     @Slot(bool)
     def set_paused(self, paused: bool) -> None:
@@ -204,6 +242,7 @@ class App(QObject):
         if self._dialog is window:
             self._dialog = None
         window.deleteLater()  # after accepted has run the job with its params
+        self.trim_soon()
 
     def submit(self, op_id: str, paths: list[Path], params: dict) -> None:
         job_id = self.jobs.submit(op_id, paths, params)
@@ -254,6 +293,7 @@ class App(QObject):
         self.toasts.finished(job_id, result)  # FR-5.5
 
     def shutdown(self) -> None:
+        self._trim_timer.stop()
         self.tray.hide()
         if self.settings is not None:
             self.settings.close()
