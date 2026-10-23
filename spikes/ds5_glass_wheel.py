@@ -46,6 +46,8 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QApplication, QFileIconProvider, QWidget
 
+from dragshift.platform import memory
+
 log = logging.getLogger("ds5")
 
 # --- Geometry at 100 % scale (PRD §8.3) -------------------------------------------------------
@@ -154,30 +156,6 @@ gdi32.GetDIBits.argtypes = [
 ]
 
 
-class PROCESS_MEMORY_COUNTERS_EX(ctypes.Structure):
-    _fields_ = [
-        ("cb", wintypes.DWORD),
-        ("PageFaultCount", wintypes.DWORD),
-        ("PeakWorkingSetSize", ctypes.c_size_t),
-        ("WorkingSetSize", ctypes.c_size_t),
-        ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
-        ("QuotaPagedPoolUsage", ctypes.c_size_t),
-        ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
-        ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
-        ("PagefileUsage", ctypes.c_size_t),
-        ("PeakPagefileUsage", ctypes.c_size_t),
-        ("PrivateUsage", ctypes.c_size_t),  # = "PM" / private bytes in Get-Process
-    ]
-
-
-kernel32.GetCurrentProcess.restype = wintypes.HANDLE
-kernel32.K32GetProcessMemoryInfo.argtypes = [
-    wintypes.HANDLE,
-    ctypes.POINTER(PROCESS_MEMORY_COUNTERS_EX),
-    wintypes.DWORD,
-]
-
-
 def grab_screen(x: int, y: int, w: int, h: int) -> QImage:
     """BitBlt a rect of the virtual screen (physical px) into an opaque QImage."""
     screen_dc = user32.GetDC(None)
@@ -219,13 +197,6 @@ def system_theme() -> str:
     except OSError:
         return "light"
     return "light" if light else "dark"
-
-
-def memory_mb() -> tuple[float, float]:
-    pmc = PROCESS_MEMORY_COUNTERS_EX()
-    pmc.cb = ctypes.sizeof(pmc)
-    kernel32.K32GetProcessMemoryInfo(kernel32.GetCurrentProcess(), ctypes.byref(pmc), pmc.cb)
-    return pmc.PrivateUsage / 2**20, pmc.WorkingSetSize / 2**20
 
 
 # --- §8.4 image steps -------------------------------------------------------------------------
@@ -578,7 +549,8 @@ HEAVY = ["PIL", "fitz", "pandas", "numpy", "pdf2docx", "pypandoc"]
 
 
 def log_memory(stage: str) -> None:
-    private, ws = memory_mb()
+    use = memory.usage()
+    private, ws = use.private_mb, use.working_set_mb
     heavy = [m for m in HEAVY if m in sys.modules] or "none"
     log.info(
         "RAM %-34s private %6.1f MB | working set %6.1f MB | heavy libs: %s",

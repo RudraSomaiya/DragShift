@@ -115,6 +115,7 @@ def _on_plate(icon: QPixmap) -> QPixmap:
 
 class LauncherWheel(WheelWindow):
     picked = Signal(str, int)  # "apps" | "sites", slot index: launch it
+    closed = Signal()  # after any close, picked or not
     add_requested = Signal(str, int)  # an empty slot was picked: open Settings > Launcher
 
     def __init__(
@@ -309,3 +310,4 @@ class LauncherWheel(WheelWindow):
     def closeEvent(self, event) -> None:
         self._idle.stop()
         super().closeEvent(event)
+        self.closed.emit()

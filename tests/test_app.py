@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 from PySide6.QtCore import QPoint
+from PySide6.QtWidgets import QWidget
 from pytestqt.qtbot import QtBot
 
 from dragshift import app as app_module
@@ -406,3 +407,99 @@ def test_add_bg_asks_first_and_runs_with_the_look_on_save(
     assert submitted[0][:2] == ("tools.image.add_bg", [src])
     assert submitted[0][2]["padding"] == 10
     assert submitted[0][2]["bg"]["kind"] == "gradient"
+
+
+def _count_trims(the_app: App, monkeypatch: pytest.MonkeyPatch) -> list[bool]:
+    trims: list[bool] = []
+    monkeypatch.setattr(app_module.memory, "trim", lambda: trims.append(True) or True)
+    the_app._trim_timer.stop()  # the start-up clock
+    return trims
+
+
+def test_the_working_set_is_trimmed_once_quiet(
+    the_app: App, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    trims = _count_trims(the_app, monkeypatch)
+    the_app._trim_memory()
+    assert trims == [True]
+    assert not the_app._trim_timer.isActive()
+
+
+def test_the_trim_waits_while_the_worker_pool_is_alive(
+    the_app: App, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    trims = _count_trims(the_app, monkeypatch)
+    monkeypatch.setattr(JobManager, "pool_active", property(lambda self: True))
+    the_app._trim_memory()
+    assert trims == []
+    assert the_app._trim_timer.isActive()  # no signal says the pool is gone: look again
+
+
+def test_the_trim_waits_while_a_window_is_open(
+    the_app: App, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    trims = _count_trims(the_app, monkeypatch)
+    window = the_app.on_show_settings()
+    the_app._trim_timer.stop()
+    the_app._trim_memory()
+    assert trims == []
+    assert not the_app._trim_timer.isActive()  # closing the window restarts the clock
+    window.close()
+    assert the_app._trim_timer.isActive()
+
+
+def test_trim_memory_when_idle_off_never_trims_until_it_is_turned_on(
+    the_app: App, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    trims = _count_trims(the_app, monkeypatch)
+
+    def set_trim(on: bool) -> None:
+        general = dataclasses.replace(the_app.store.config.general, trim_memory_when_idle=on)
+        the_app.store.update(dataclasses.replace(the_app.store.config, general=general))
+
+    set_trim(False)
+    the_app._trim_memory()
+    assert trims == []
+    the_app._trim_timer.stop()
+    set_trim(True)
+    assert the_app._trim_timer.isActive()  # turning it on starts the clock
+    the_app._trim_memory()
+    assert trims == [True]
+
+
+@pytest.mark.parametrize("event", ["wheel", "job", "launcher", "dialog"])
+def test_what_the_user_did_restarts_the_idle_clock(
+    the_app: App, monkeypatch: pytest.MonkeyPatch, event: str
+) -> None:
+    monkeypatch.setattr(the_app.toasts, "finished", lambda *a: None)
+    the_app._trim_timer.stop()
+    if event == "wheel":
+        the_app.wheel.closed.emit()
+    elif event == "job":
+        result = JobResult("convert.image.webp", [Path("C:/x/a.png")], [], True, "", {})
+        the_app.jobs.finished.emit("job-1", result)
+    elif event == "launcher":
+        the_app.launcher.closed.emit()  # closed with or without a pick
+    else:
+        the_app._dialog_closed(QWidget())
+    assert the_app._trim_timer.isActive()
+
+
+def test_usage_reports_this_process() -> None:
+    from dragshift.platform import memory
+
+    use = memory.usage()
+    assert use.private_mb > 10
+    assert use.working_set_mb > 10
+
+
+def test_trim_empties_the_working_set() -> None:
+    """In a process of its own: trimming the pytest process would slow every later test."""
+    script = (
+        "from dragshift.platform import memory;"
+        "before = memory.usage().working_set_mb;"
+        "assert memory.trim();"
+        "print(before > memory.usage().working_set_mb)"
+    )
+    out = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, check=True)
+    assert out.stdout.strip() == "True"
