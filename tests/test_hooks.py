@@ -242,6 +242,70 @@ def test_hook_looks_dead(last_input: int, last_seen: int, dead: bool) -> None:
     assert hook_looks_dead(last_input, last_seen) is dead
 
 
+@pytest.mark.parametrize(
+    ("desktop", "fg", "self_elevated", "expected"),
+    [
+        ("Default", ("explorer.exe", False), False, None),
+        ("Default", ("Taskmgr.exe", True), False, "an elevated window (Taskmgr.exe)"),
+        ("Default", ("Taskmgr.exe", True), True, None),  # we are elevated too: no UIPI
+        ("Default", ("", None), False, None),  # unknown: let the watchdog decide
+        ("Winlogon", ("explorer.exe", False), False, "the secure desktop"),
+        ("", ("explorer.exe", False), False, "the secure desktop"),  # could not open it
+    ],
+)
+def test_unseeable_input(
+    monkeypatch: pytest.MonkeyPatch, desktop, fg, self_elevated, expected
+) -> None:
+    monkeypatch.setattr(hooks, "_input_desktop", lambda: desktop)
+    monkeypatch.setattr(hooks, "_foreground", lambda: fg)
+    monkeypatch.setattr(hooks, "_SELF_ELEVATED", self_elevated)
+    reason = hooks.unseeable_input()
+    assert reason is None if expected is None else reason.startswith(expected)
+
+
+def test_unseeable_input_reads_the_real_desktop() -> None:
+    # This test runs non-elevated on the normal desktop, so there is nothing hidden.
+    assert hooks._input_desktop().lower() in ("default", "")
+    name, _elevated = hooks._foreground()
+    assert isinstance(name, str)
+
+
+def _stale_thread(monkeypatch: pytest.MonkeyPatch, reason: str | None) -> HookThread:
+    """A HookThread whose watchdog sees input the hooks missed, and fakes the re-install."""
+    ht = HookThread()
+    monkeypatch.setattr(hooks, "_last_input_tick", lambda: ht._last_seen_tick + 10_000)
+    monkeypatch.setattr(hooks, "unseeable_input", lambda: reason)
+    monkeypatch.setattr(hooks, "_foreground", lambda: ("app.exe", False))
+    monkeypatch.setattr(ht, "_uninstall", lambda: None)
+    monkeypatch.setattr(ht, "_install", lambda: None)
+    return ht
+
+
+def test_watchdog_leaves_hooks_alone_when_input_is_out_of_reach(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    ht = _stale_thread(monkeypatch, "an elevated window (Taskmgr.exe)")
+    resets: list[int] = []
+    ht.reinstalled.connect(lambda: resets.append(1))
+    with caplog.at_level("INFO", logger=hooks.__name__):
+        for _ in range(3):
+            ht._watchdog_tick()
+    assert ht.reinstall_count == 0
+    assert resets == []  # the gesture state is kept
+    assert len(caplog.records) == 1  # said once, not every tick
+    assert caplog.records[0].levelname == "INFO"
+
+
+def test_watchdog_reinstalls_when_the_cause_is_unknown(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    ht = _stale_thread(monkeypatch, None)
+    with caplog.at_level("WARNING", logger=hooks.__name__):
+        ht._watchdog_tick()
+    assert ht.reinstall_count == 1
+    assert "foreground app.exe" in caplog.text
+
+
 # --- live hooks -------------------------------------------------------------------------------------
 class _KEYBDINPUT(ctypes.Structure):
     _fields_ = [
