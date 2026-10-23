@@ -10,7 +10,7 @@ EBU R128 ``loudnorm`` in one pass, written in the source's format (MP3 for WMA),
 rate (``<stem> Normalized.<ext>``).
 
 ffmpeg is only called inside the functions: the UI process imports this module to register Ops
-(CLAUDE.md rule 2).
+(CONTRIBUTING.md rule 2).
 """
 
 from pathlib import Path

@@ -3,7 +3,7 @@ estimate line.
 
 It only collects params: the App submits the job when it is accepted.
 
-UI-process module: it must never import an engine library (CLAUDE.md rule 2).
+UI-process module: it must never import an engine library (CONTRIBUTING.md rule 2).
 """
 
 from collections.abc import Sequence

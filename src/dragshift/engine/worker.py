@@ -274,7 +274,7 @@ def run_job(func: str, groups: list[list[Path]], params: dict, ctx: JobContext) 
 
     Groups are independent (FR-4.2): a failing file loses only its own ``.part`` files and the
     outputs of the other files are kept. A cancel discards everything this job wrote. Source
-    files are never touched here (CLAUDE.md rule 4).
+    files are never touched here (CONTRIBUTING.md rule 4).
     """
     try:
         fn = resolve(func)

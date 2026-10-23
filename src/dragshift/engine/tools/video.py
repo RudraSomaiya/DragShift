@@ -13,7 +13,7 @@ Mute copies the picture as it is (``<stem> Muted.<ext>``). Extract audio writes 
 or 1080 px at CRF 20, never enlarging (``<stem> 720p.mp4``).
 
 ffmpeg is only called inside the functions: the UI process imports this module to register Ops
-(CLAUDE.md rule 2).
+(CONTRIBUTING.md rule 2).
 """
 
 import tempfile

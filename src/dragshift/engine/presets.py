@@ -8,7 +8,7 @@ runs Small). Custom… opens the compress dialog, which adds ``target_mb`` or ``
 Sizes are counted as Windows Explorer shows them (1 MB = 1,048,576 bytes), so the size in a
 toast, in the note and in Explorer always agree.
 
-Pure Python: the UI process imports this module to register Ops (CLAUDE.md rule 2).
+Pure Python: the UI process imports this module to register Ops (CONTRIBUTING.md rule 2).
 """
 
 from collections.abc import Callable

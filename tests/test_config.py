@@ -286,7 +286,7 @@ def test_store_loads_the_existing_file(path: Path, qapp: object) -> None:
     assert ConfigStore(path).config.general.autostart is True
 
 
-# --- the UI process stays lean (CLAUDE.md rule 2) ----------------------------------------------------
+# --- the UI process stays lean (CONTRIBUTING.md rule 2) ----------------------------------------------------
 def test_config_imports_no_engine_libraries() -> None:
     heavy = ["PIL", "fitz", "pandas", "numpy", "pdf2docx", "pypandoc"]
     script = (

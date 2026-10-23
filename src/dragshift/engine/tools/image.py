@@ -21,7 +21,7 @@ SVG are not compressed, and neither are animated images: only the first frame wo
 A camera's MPO .jpg is compressed as its main photo.
 
 Pillow is imported inside the functions: the UI process imports this module to register Ops
-(CLAUDE.md rule 2).
+(CONTRIBUTING.md rule 2).
 """
 
 import io

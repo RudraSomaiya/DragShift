@@ -49,7 +49,7 @@ def run(func: str, src: Path, params: dict | None = None, ctx: JobContext | None
     """Run an Op the way the pool does, check the source is untouched, finish the outputs."""
     before = sha(src)
     result = run_job(f"{MODULE}:{func}", [[src]], params or {}, ctx or JobContext("t"))
-    assert sha(src) == before  # CLAUDE.md rule 4
+    assert sha(src) == before  # CONTRIBUTING.md rule 4
     result["outputs"] = [part.rename(final_path(part)) for part in result["outputs"]]
     return result
 

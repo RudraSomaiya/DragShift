@@ -9,7 +9,7 @@
   read accented text.
 
 pandas and its Excel engines are imported inside the functions: the UI process imports this
-module to register Ops (CLAUDE.md rule 2).
+module to register Ops (CONTRIBUTING.md rule 2).
 """
 
 import csv

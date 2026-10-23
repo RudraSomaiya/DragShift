@@ -514,7 +514,7 @@ def test_callback_latency_with_a_busy_python_thread_stays_under_1ms(live: HookTh
 
 
 def test_hooks_module_keeps_the_ui_process_lean() -> None:
-    """CLAUDE.md rule 2: nothing under dragshift/platform may import engine libraries."""
+    """CONTRIBUTING.md rule 2: nothing under dragshift/platform may import engine libraries."""
     heavy = ["PIL", "fitz", "pandas", "numpy", "pdf2docx", "pypandoc"]
     script = (
         "import sys, dragshift.platform.hooks;"

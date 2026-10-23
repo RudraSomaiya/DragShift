@@ -11,7 +11,7 @@ tray's Pause, a hand edit) is shown in it too.
   by browsing, or from the Start menu's apps; a site by label and URL. Drag a slot to reorder.
 - **Appearance**, **Output**, **General:** as in FR-8.1.
 
-UI-process module: it must never import an engine library (CLAUDE.md rule 2).
+UI-process module: it must never import an engine library (CONTRIBUTING.md rule 2).
 """
 
 import dataclasses

@@ -1,13 +1,13 @@
 [project]
 name = "dragshift"
-version = "0.1.0.dev0"
+version = "1.0.0"
 description = "Drag a file, tap a key, and a wheel converts it or runs a tool on it. Windows only."
 readme = "README.md"
 requires-python = ">=3.12"
 license = "AGPL-3.0-only"
 license-files = ["LICENSE"]
 dependencies = [
-    # UI process (must stay lean, see CLAUDE.md rule 2)
+    # UI process (must stay lean, see CONTRIBUTING.md rule 2)
     "PySide6-Essentials>=6.8",
     "pywin32",
     # Engines (imported by worker functions only)

@@ -7,7 +7,7 @@ upright image and several dropped pictures get the same relative crop (the first
 
 The preview is decoded by Qt, so HEIC and AVIF have none and cannot be cropped here.
 
-UI-process module: it must never import an engine library (CLAUDE.md rule 2).
+UI-process module: it must never import an engine library (CONTRIBUTING.md rule 2).
 """
 
 from collections.abc import Sequence
