@@ -140,9 +140,9 @@ def preview_limit() -> int:
     return min(PREVIEW, screen.availableGeometry().height() - CHROME) if screen else PREVIEW
 
 
-def load_preview(path: Path) -> tuple[QImage, QSize] | None:
-    """The picture upright and fitted to ``preview_limit()``, with its full size; None if Qt
-    cannot read it."""
+def load_preview(path: Path, limit: int | None = None) -> tuple[QImage, QSize] | None:
+    """The picture upright and fitted to ``limit`` (default ``preview_limit()``), with its full
+    size; None if Qt cannot read it."""
     reader = QImageReader(str(path))
     reader.setAutoTransform(True)  # apply the EXIF orientation, as the worker does
     raw = reader.size()
@@ -150,7 +150,7 @@ def load_preview(path: Path) -> tuple[QImage, QSize] | None:
         return None
     # size() is the stored one: a quarter turn swaps the sides.
     full = raw.transposed() if int(reader.transformation().value) & 4 else raw
-    limit = max(preview_limit(), 100)
+    limit = limit or max(preview_limit(), 100)
     fit = full.scaled(limit, limit, Qt.AspectRatioMode.KeepAspectRatio)
     reader.setScaledSize(fit.transposed() if full != raw else fit)  # decode no more than shown
     image = reader.read()

@@ -36,6 +36,7 @@ from dragshift.platform import autostart, files
 from dragshift.platform.hooks import HookInstallError, HookThread
 from dragshift.platform.single_instance import SingleInstance
 from dragshift.ui import theme
+from dragshift.ui.dialogs.add_bg import AddBgDialog
 from dragshift.ui.dialogs.base_glass import GlassDialog
 from dragshift.ui.dialogs.compress import CompressDialog
 from dragshift.ui.dialogs.crop import CropDialog
@@ -49,9 +50,8 @@ __all__ = ["App", "build", "run"]
 
 log = logging.getLogger(__name__)
 
-# Op.dialog -> the window that collects its params (§8.6). Add BG and Extract pages come with
-# their own stories.
-DIALOGS = {"compress": CompressDialog, "crop": CropDialog}
+# Op.dialog -> the window that collects its params (§8.6). Extract pages comes with its own story.
+DIALOGS = {"add_bg": AddBgDialog, "compress": CompressDialog, "crop": CropDialog}
 
 
 class App(QObject):
