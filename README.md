@@ -11,7 +11,7 @@ A free, open-source Windows take on Tangerine for Mac. Everything runs on your o
 [![Windows 10 | 11][badge-windows]][link-windows]
 [![License: AGPL-3.0][badge-license]](LICENSE)
 
-<img src="docs/images/hero.png" alt="Drag a file, tap Shift, drop it on a petal of the wheel, done" width="880">
+<img src="docs/images/demo.gif" alt="Drag photo.png, tap Shift, drop it on the JPG petal, and photo.jpg appears next to it. Then Shift, Ctrl and Alt open the Convert, Tools and Actions wheels" width="880">
 
 </div>
 
@@ -20,6 +20,8 @@ A free, open-source Windows take on Tangerine for Mac. Everything runs on your o
 Converting a file on Windows usually means opening an app or a website, uploading the file, picking a format, downloading the result and moving it back where it belongs. Online converters also send private files to servers you know nothing about.
 
 Tangerine for Mac solved this with a gesture. You start dragging a file, tap a modifier key, and a radial wheel opens around the cursor. You drop the file on a petal, and the new file appears next to the original. DragShift brings that gesture to Windows as a small background app. It also adds **Quick Launch**: tap Shift or Ctrl on an empty desktop to open a wheel of your favourite apps or websites.
+
+<img src="docs/images/hero.png" alt="Drag a file, tap Shift, drop it on a petal of the wheel, done" width="880">
 
 DragShift is a clean-room re-implementation. It copies no code or assets from Tangerine.
 

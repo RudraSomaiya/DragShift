@@ -30,3 +30,6 @@ private/
 .claude/
 CLAUDE.md
 CLAUDE.local.md
+
+# launch video renders (/brag-slim)
+brag-output/
